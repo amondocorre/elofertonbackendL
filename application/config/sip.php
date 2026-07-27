@@ -38,6 +38,6 @@ $config['sip_credentials'] = [
         'username'    => 'EMISORMIER',
         'password'    => 'oBRerito.2026',
         'api_url'     => 'https://sip.mc4.com.bo:8443', // Ejemplo: https://sip.mc4.com.bo:8443
-        'callback'    => 'https://eloferton.mamier.cloud/index.php/PasarelaQr/callback_pago'
+        // 'callback'    => 'https://eloferton.mamier.cloud/index.php/PasarelaQr/callback_pago'
     ]
 ];

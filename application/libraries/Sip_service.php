@@ -267,9 +267,19 @@ class Sip_service
 
         $data = json_decode($response, true);
         
-        // Retornar estado si existe
+        // Retornar estado si existe (algunas versiones de la API podrían retornarlo)
         if (isset($data['objeto']['estado'])) {
             return strtoupper($data['objeto']['estado']);
+        }
+
+        // Si no hay campo estado pero el código es 0000 y hay numeroOrdenOriginante, asumimos PAGADO
+        if (isset($data['codigo']) && $data['codigo'] === '0000' && isset($data['objeto']['numeroOrdenOriginante'])) {
+            return 'PAGADO';
+        }
+
+        // Si el código es 0000 pero no hay número de orden, puede seguir pendiente
+        if (isset($data['codigo']) && $data['codigo'] === '0000') {
+            return 'PENDIENTE';
         }
 
         return 'PENDIENTE';
