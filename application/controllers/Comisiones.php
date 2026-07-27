@@ -1,7 +1,7 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Comisiones extends CI_Controller {
+class Comisiones extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
@@ -11,7 +11,7 @@ class Comisiones extends CI_Controller {
         // CORS Headers
         header('Access-Control-Allow-Origin: *');
         header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
-        header("Access-Control-Allow-Headers: Content-Type, Content-Length, Accept-Encoding");
+        header('Access-Control-Allow-Headers: Content-Type, Content-Length, Accept-Encoding, X-User-Id, X-Rol-Id, X-Active-Branch, Authorization');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
             exit();
@@ -23,6 +23,7 @@ class Comisiones extends CI_Controller {
      * Permite filtrar por estado "pendientes" o "pagadas".
      */
     public function listar_comisiones() {
+        $this->check_permission('Comisiones', 'ver');
         $estado = $this->input->get('estado') ?: 'pendientes';
         
         // Obtener IDs de vendedores y sus nombres
@@ -60,6 +61,7 @@ class Comisiones extends CI_Controller {
      * que componen la comisión (pendiente o pagada).
      */
     public function detalle_vendedor() {
+        $this->check_permission('Comisiones', 'ver');
         $vendedor_id = $this->input->get('vendedor_id');
         $estado = $this->input->get('estado') ?: 'pendientes';
 
@@ -94,6 +96,7 @@ class Comisiones extends CI_Controller {
      * Recibe un array de IDs de vendedores y marca sus comisiones pendientes como pagadas.
      */
     public function pagar_comisiones() {
+        $this->check_permission('Comisiones', 'editar');
         $data = json_decode(file_get_contents('php://input'), true);
 
         if (!$data || !isset($data['vendedores_ids']) || !is_array($data['vendedores_ids'])) {

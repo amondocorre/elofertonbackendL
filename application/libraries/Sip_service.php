@@ -16,29 +16,24 @@ class Sip_service
         if ($CI) {
             $CI->load->database();
             
-            // Crear la tabla de configuración si no existe
+            // Crear la tabla de configuración si no existe (usada para guardar el token temporal)
             $CI->db->query("CREATE TABLE IF NOT EXISTS `bisa_qr_config` (
                 `id` INT(11) NOT NULL AUTO_INCREMENT,
-                `api_key` VARCHAR(255) NOT NULL,
-                `service_key` VARCHAR(255) NOT NULL,
-                `username` VARCHAR(255) NOT NULL,
-                `password` VARCHAR(255) NOT NULL,
-                `api_url` VARCHAR(255) NOT NULL,
+                `api_key` VARCHAR(255) DEFAULT NULL,
+                `service_key` VARCHAR(255) DEFAULT NULL,
+                `username` VARCHAR(255) DEFAULT NULL,
+                `password` VARCHAR(255) DEFAULT NULL,
+                `api_url` VARCHAR(255) DEFAULT NULL,
                 `token` TEXT DEFAULT NULL,
                 `token_expires_at` DATETIME DEFAULT NULL,
                 `updated_at` DATETIME DEFAULT NULL,
                 PRIMARY KEY (`id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;");
 
-            // Si la tabla está vacía, insertar los valores por defecto
+            // Si la tabla está vacía, insertar un registro para almacenar el token
             $query = $CI->db->get('bisa_qr_config');
             if ($query->num_rows() == 0) {
                 $CI->db->insert('bisa_qr_config', [
-                    'api_key' => 'd84cb47c4ed75374221a80641c9ed034754eaf0303ae8d26',
-                    'service_key' => 'f42909ed5cd3a34c9e2b15586fab5614104be4bafcb53afa',
-                    'username' => 'mamiersrlDesarrollo',
-                    'password' => 'Mamier.2026',
-                    'api_url' => 'https://dev-sip.mc4.com.bo:8443',
                     'updated_at' => date('Y-m-d H:i:s')
                 ]);
             }
@@ -46,30 +41,32 @@ class Sip_service
     }
 
     /**
-     * Carga la configuración desde la base de datos o usa fallback por defecto
+     * Carga la configuración desde el archivo de configuración (config/sip.php)
      */
     private function loadConfig()
     {
         $CI =& get_instance();
+        $configDb = null;
         if ($CI) {
-            $config = $CI->db->get('bisa_qr_config')->row();
-            if ($config) {
-                $this->apiKey = $config->api_key;
-                $this->serviceKey = $config->service_key;
-                $this->username = $config->username;
-                $this->password = $config->password;
-                $this->apiUrl = $config->api_url;
-                return $config;
+            // Obtenemos el registro de la DB solo para la gestión del Token
+            $configDb = $CI->db->get('bisa_qr_config')->row();
+            
+            // Cargar configuración de archivo sip.php
+            $CI->config->load('sip', true, true);
+            $env = $CI->config->item('sip_environment', 'sip');
+            $creds = $CI->config->item('sip_credentials', 'sip');
+            
+            if ($env && isset($creds[$env])) {
+                $activeCreds = $creds[$env];
+                $this->apiKey = $activeCreds['api_key'];
+                $this->serviceKey = $activeCreds['service_key'];
+                $this->username = $activeCreds['username'];
+                $this->password = $activeCreds['password'];
+                $this->apiUrl = $activeCreds['api_url'];
             }
         }
 
-        // Credenciales por defecto para BISA/SIP (fallback)
-        $this->apiKey = 'd84cb47c4ed75374221a80641c9ed034754eaf0303ae8d26';
-        $this->serviceKey = 'f42909ed5cd3a34c9e2b15586fab5614104be4bafcb53afa';
-        $this->username = 'mamiersrlDesarrollo';
-        $this->password = 'Mamier.2026';
-        $this->apiUrl = 'https://dev-sip.mc4.com.bo:8443';
-        return null;
+        return $configDb;
     }
 
     /**
@@ -158,15 +155,16 @@ class Sip_service
             'Content-Type: application/json'
         ];
 
-        // Obtener la URL del callback dinámicamente
+        // Cargar configuración de URL Callback
         $CI =& get_instance();
         $CI->load->helper('url');
+        $CI->config->load('sip', true, true);
+        $env = $CI->config->item('sip_environment', 'sip');
+        $creds = $CI->config->item('sip_credentials', 'sip');
+        
         $callbackUrl = site_url('PasarelaQr/callback_pago');
-
-        // Si el servidor está detrás de un proxy (como Dokploy/Traefik) y genera la IP privada del contenedor (ej: 10.0.1.94),
-        // forzamos el uso del dominio público para que el banco pueda resolver el webhook.
-        if (preg_match('/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)/', $callbackUrl)) {
-            $callbackUrl = 'https://apidemo.mamier.cloud/index.php/PasarelaQr/callback_pago';
+        if ($env && isset($creds[$env]) && !empty($creds[$env]['callback'])) {
+            $callbackUrl = $creds[$env]['callback'];
         }
 
         // Vencimiento del QR en 2 días
@@ -195,6 +193,8 @@ class Sip_service
         }
 
         $data = json_decode($response, true);
+        file_put_contents(APPPATH . 'logs/debug_bisa_response.txt', "TIME: " . date('Y-m-d H:i:s') . "\nRESPONSE: " . var_export($response, true) . "\n", FILE_APPEND);
+        log_message('error', 'Respuesta Sip_service generaQr: ' . $response);
 
         // Si el usuario no tiene permisos en el entorno de desarrollo, simular el QR
         $code = $data['codigo'] ?? '';
@@ -211,7 +211,8 @@ class Sip_service
         }
 
         if ($code === '0000' || (isset($data['objeto']) && $data['objeto'] !== null)) {
-            $qrBase64 = $data['objeto']['imagenBase64'] ?? null;
+            // La API de BISA devuelve el base64 en el campo 'imagenQr' (no 'imagenBase64')
+            $qrBase64 = $data['objeto']['imagenQr'] ?? $data['objeto']['imagenBase64'] ?? null;
             if (empty($qrBase64)) {
                 $qrBase64 = $this->getSimulatedQrBase64($alias, $amount);
             }
@@ -272,6 +273,50 @@ class Sip_service
         }
 
         return 'PENDIENTE';
+    }
+
+    /**
+     * Inhabilita un QR generado en SIP
+     * 
+     * @param string $alias Identificador único de transacción
+     * @return bool True si se inhabilitó correctamente, False caso contrario
+     */
+    public function inhabilitarQr($alias)
+    {
+        $token = $this->getToken();
+        if (!$token) {
+            log_message('error', "SIP BISA: No se pudo obtener el token para inhabilitar QR.");
+            return false;
+        }
+
+        $url = $this->apiUrl . '/api/v1/inhabilitarPago';
+
+        $headers = [
+            'apikeyServicio: ' . $this->serviceKey,
+            'Authorization: Bearer ' . $token,
+            'Content-Type: application/json'
+        ];
+
+        $body = [
+            'alias' => $alias
+        ];
+
+        $response = $this->sendPostRequest($url, $headers, $body);
+
+        if (!$response) {
+            log_message('error', "SIP BISA: Error de conexión al inhabilitar QR.");
+            return false;
+        }
+
+        $data = json_decode($response, true);
+        
+        // El manual indica: "codigo": "0000" para éxito
+        if (isset($data['codigo']) && $data['codigo'] === '0000') {
+            return true;
+        }
+
+        log_message('error', "SIP BISA: Error al inhabilitar QR. Respuesta: " . $response);
+        return false;
     }
 
     /**

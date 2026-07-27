@@ -27,6 +27,12 @@ class Conciliacion_model extends CI_Model
             return false;
         }
 
+        // Si es administrador (rol 1), tiene acceso global a todos los almacenes
+        $user = $this->db->select('id_rol')->where('id', intval($userId))->get('vendedores')->row();
+        if ($user && $user->id_rol == 1) {
+            return true;
+        }
+
         // Consultar la tabla pivote usuarios_almacenes
         $query = $this->db->get_where('usuarios_almacenes', [
             'usuario_id' => intval($userId),
@@ -89,7 +95,7 @@ class Conciliacion_model extends CI_Model
         }
 
         // 2. Obtener el detalle de productos con precios maestros incluidos
-        $this->db->select('pd.*, prod.descripcion, prod.idprod as codigo_producto, prod.preciolocal, prod.precioventa, prod.nuevoprecio');
+        $this->db->select('pd.*, prod.descripcion, prod.idprod as codigo_producto, prod.preciolocal, prod.precioventa, prod.nuevoprecio, prod.comision');
         $this->db->from('pedido_detalles pd');
         $this->db->join('productos prod', 'pd.producto_id = prod.id', 'left');
         $this->db->where('pd.pedido_id', intval($pedidoId));

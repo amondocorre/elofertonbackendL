@@ -1,13 +1,13 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Productos extends CI_Controller {
+class Productos extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
         // CORS Headers
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -17,10 +17,35 @@ class Productos extends CI_Controller {
         $this->load->database();
     }
 
+    public function detalle_compras() {
+        $this->check_permission('Productos', 'ver');
+        $idprod = $this->input->get('idprod');
+        if (empty($idprod)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'idprod es requerido']));
+        }
+
+        $this->db->select('i.fecha_ingreso as fecha, i.preciolocal, i.cantidad, d.nombre as sucursal');
+        $this->db->from('inventarios i');
+        $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+        $this->db->where('i.idprod', $idprod);
+        $this->db->where('i.cantidad >', 0);
+        $this->db->order_by('i.fecha_ingreso', 'DESC');
+        
+        $compras = $this->db->get()->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($compras));
+    }
+
     /**
      * Obtiene el listado de productos de la tabla productos con búsqueda y paginación.
      */
     public function index() {
+        $this->check_permission('Productos', 'ver');
         $search = $this->input->get('q');
         $marca = $this->input->get('marca');
         $categoria = $this->input->get('categoria');
@@ -28,12 +53,13 @@ class Productos extends CI_Controller {
         $page = $this->input->get('page') ? intval($this->input->get('page')) : 1;
         $limit = $this->input->get('limit') ? intval($this->input->get('limit')) : 25;
 
-        $this->db->select('p.*, pr.nombre AS proveedor_nombre, d.nombre AS deposito_nombre, u.descripcion AS unidad, c.descripcion AS categoria, m.nombre AS marca');
+        $this->db->select('p.*, pr.nombre AS proveedor_nombre, d.nombre AS deposito_nombre, u.descripcion AS unidad, c.descripcion AS categoria, sc.nombre AS subcategoria_nombre, m.nombre AS marca');
         $this->db->from('productos p');
         $this->db->join('proveedores pr', 'p.proveedor = pr.id', 'left');
         $this->db->join('depositos d', 'p.deposito = d.id', 'left');
         $this->db->join('unidad_medida u', 'p.idunidad = u.idunidad', 'left');
         $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+        $this->db->join('subcategoria sc', 'p.idsubcategoria = sc.idsubcategoria', 'left');
         $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
 
         if (!empty($search)) {
@@ -91,6 +117,11 @@ class Productos extends CI_Controller {
         }
 
         $id = isset($data['id']) && $data['id'] !== '' && $data['id'] !== 'null' ? intval($data['id']) : null;
+        if ($id) {
+            $this->check_permission('Productos', 'editar');
+        } else {
+            $this->check_permission('Productos', 'crear');
+        }
         $idprod = isset($data['idprod']) ? trim($data['idprod']) : '';
         $descripcion = isset($data['descripcion']) ? trim($data['descripcion']) : '';
         $idmarca = isset($data['idmarca']) && $data['idmarca'] !== '' ? intval($data['idmarca']) : null;
@@ -108,7 +139,7 @@ class Productos extends CI_Controller {
             }
         }
         $idcategoria = isset($data['idcategoria']) && $data['idcategoria'] !== '' ? intval($data['idcategoria']) : null;
-        $subcategoria = isset($data['subcategoria']) ? trim($data['subcategoria']) : '';
+        $idsubcategoria = isset($data['idsubcategoria']) && $data['idsubcategoria'] !== '' ? intval($data['idsubcategoria']) : null;
         $idunidad = isset($data['idunidad']) && $data['idunidad'] !== '' ? intval($data['idunidad']) : null;
         $subunidad = isset($data['subunidad']) ? trim($data['subunidad']) : 'unid';
         $preciolocal = isset($data['preciolocal']) ? floatval($data['preciolocal']) : 0.0;
@@ -178,7 +209,7 @@ class Productos extends CI_Controller {
             'marca' => $marca,
             'idmarca' => $idmarca,
             'idcategoria' => $idcategoria,
-            'subcategoria' => $subcategoria,
+            'idsubcategoria' => $idsubcategoria,
             'idunidad' => $idunidad,
             'subunidad' => $subunidad,
             'preciolocal' => $preciolocal,
@@ -210,6 +241,7 @@ class Productos extends CI_Controller {
      * Verifica si un código de producto ya existe
      */
     public function verificar_codigo() {
+        $this->check_permission('Productos', 'ver');
         $idprod = $this->input->get('idprod');
         $id = $this->input->get('id');
 
@@ -236,6 +268,7 @@ class Productos extends CI_Controller {
      * Guarda una lista de productos en lote desde importación masiva.
      */
     public function guardar_masivo() {
+        $this->check_permission('Productos', 'crear');
         $data = json_decode(file_get_contents('php://input'), true);
         $productos = isset($data['productos']) ? $data['productos'] : [];
 
@@ -259,12 +292,41 @@ class Productos extends CI_Controller {
                 continue; // Saltar registros incompletos
             }
 
+            $marca = isset($p['marca']) ? trim($p['marca']) : '';
+            $idmarca = null;
+            if (!empty($marca)) {
+                $brand_row = $this->db->where('nombre', $marca)->get('marcas')->row();
+                if ($brand_row) { $idmarca = $brand_row->id; }
+            }
+
+            $categoria = isset($p['categoria']) ? trim($p['categoria']) : '';
+            $idcategoria = null;
+            if (!empty($categoria)) {
+                $cat_row = $this->db->where('descripcion', $categoria)->get('categoria_producto')->row();
+                if ($cat_row) { $idcategoria = $cat_row->idcategoria; }
+            }
+
+            $subcategoria = isset($p['subcategoria']) ? trim($p['subcategoria']) : '';
+            $idsubcategoria = null;
+            if (!empty($subcategoria)) {
+                $subcat_row = $this->db->where('nombre', $subcategoria)->get('subcategoria')->row();
+                if ($subcat_row) { $idsubcategoria = $subcat_row->idsubcategoria; }
+            }
+
+            $unidad = isset($p['unidad']) ? trim($p['unidad']) : 'unid';
+            $idunidad = null;
+            if (!empty($unidad)) {
+                $unid_row = $this->db->where('descripcion', $unidad)->get('unidad_medida')->row();
+                if ($unid_row) { $idunidad = $unid_row->idunidad; }
+            }
+
             $prodData = [
                 'descripcion' => $descripcion,
-                'marca' => isset($p['marca']) ? trim($p['marca']) : '',
-                'categoria' => isset($p['categoria']) ? trim($p['categoria']) : '',
-                'subcategoria' => isset($p['subcategoria']) ? trim($p['subcategoria']) : '',
-                'unidad' => isset($p['unidad']) ? trim($p['unidad']) : 'unid',
+                'marca' => $marca,
+                'idmarca' => $idmarca,
+                'idcategoria' => $idcategoria,
+                'idsubcategoria' => $idsubcategoria,
+                'idunidad' => $idunidad,
                 'subunidad' => isset($p['subunidad']) ? trim($p['subunidad']) : 'unid',
                 'preciolocal' => isset($p['preciolocal']) ? floatval($p['preciolocal']) : 0.0,
                 'precioventa' => isset($p['precioventa']) ? floatval($p['precioventa']) : 0.0,
@@ -312,6 +374,7 @@ class Productos extends CI_Controller {
      * Elimina un producto.
      */
     public function eliminar($id = null) {
+        $this->check_permission('Productos', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -340,6 +403,7 @@ class Productos extends CI_Controller {
      * Activa un producto (cambia estado a Activo).
      */
     public function reactivar($id = null) {
+        $this->check_permission('Productos', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')

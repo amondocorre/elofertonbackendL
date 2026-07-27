@@ -7,7 +7,7 @@ class Impuestos extends CI_Controller {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {

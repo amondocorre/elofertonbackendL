@@ -1,13 +1,13 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Marcas extends CI_Controller {
+class Marcas extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
         // Configuración de cabeceras CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method');
+        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, X-User-Id, X-Rol-Id, X-Active-Branch, Authorization');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         header('Access-Control-Max-Age: 86400');
         
@@ -22,6 +22,7 @@ class Marcas extends CI_Controller {
      * Obtiene el listado de marcas paginado y filtrado.
      */
     public function index() {
+        $this->check_permission('Marcas', 'ver');
         $search = $this->input->get('q');
         $page = $this->input->get('page') ? intval($this->input->get('page')) : null;
         $limit = $this->input->get('limit') ? intval($this->input->get('limit')) : 50;
@@ -83,8 +84,12 @@ class Marcas extends CI_Controller {
      * Guarda o edita una marca con control de duplicidad por nombre.
      */
     public function guardar() {
-        $raw_input = file_get_contents('php://input');
-        $data = json_decode($raw_input, true);
+        $contentType = isset($_SERVER["CONTENT_TYPE"]) ? trim($_SERVER["CONTENT_TYPE"]) : '';
+        if (strpos($contentType, 'application/json') !== false) {
+            $data = json_decode(file_get_contents('php://input'), true);
+        } else {
+            $data = $this->input->post();
+        }
 
         if (!$data || empty($data['nombre'])) {
             return $this->output
@@ -93,7 +98,12 @@ class Marcas extends CI_Controller {
                 ->set_output(json_encode(['error' => 'El nombre de la marca es obligatorio']));
         }
 
-        $id = isset($data['id']) ? intval($data['id']) : null;
+        $id = isset($data['id']) && $data['id'] !== '' && $data['id'] !== 'null' ? intval($data['id']) : null;
+        if ($id) {
+            $this->check_permission('Marcas', 'editar');
+        } else {
+            $this->check_permission('Marcas', 'crear');
+        }
         $name = trim($data['nombre']);
 
         // Validación de Marca Duplicada por nombre
@@ -112,9 +122,44 @@ class Marcas extends CI_Controller {
                 ]));
         }
 
+        $logo = isset($data['logo']) ? trim($data['logo']) : '';
+
+        // Subir imagen si existe
+        if (isset($_FILES['logo_file']) && !empty($_FILES['logo_file']['name'])) {
+            $upload_path = FCPATH . 'uploads/marcas/';
+            if (!is_dir($upload_path)) {
+                mkdir($upload_path, 0777, true);
+            }
+            
+            $ext = pathinfo($_FILES['logo_file']['name'], PATHINFO_EXTENSION);
+            $safe_name = preg_replace('/[^a-zA-Z0-9._-]/', '', str_replace(' ', '_', $name));
+            $new_filename = strtolower($safe_name) . '_' . time() . '.' . $ext;
+
+            $config['upload_path'] = $upload_path;
+            $config['allowed_types'] = '*'; // Allow all types to bypass strict MIME checks from CI3
+            $config['max_size'] = 2000; // 2 MB
+            $config['file_name'] = $new_filename;
+            $config['overwrite'] = TRUE;
+
+            $this->load->library('upload', $config);
+            $this->upload->initialize($config);
+
+            if ($this->upload->do_upload('logo_file')) {
+                $uploadData = $this->upload->data();
+                $logo = $uploadData['file_name'];
+            } else {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(400)
+                    ->set_output(json_encode(['error' => strip_tags($this->upload->display_errors())]));
+            }
+        }
+
         $brand_data = [
             'nombre' => $name,
-            'pais'   => isset($data['pais']) ? trim($data['pais']) : ''
+            'pais'   => isset($data['pais']) ? trim($data['pais']) : '',
+            'direccion_garantia' => isset($data['direccion_garantia']) ? trim($data['direccion_garantia']) : '',
+            'logo' => $logo
         ];
 
         if ($id) {
@@ -147,6 +192,7 @@ class Marcas extends CI_Controller {
      * Inactiva una marca (baja lógica).
      */
     public function inactivar($id = null) {
+        $this->check_permission('Marcas', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -174,6 +220,7 @@ class Marcas extends CI_Controller {
      * Reactiva una marca.
      */
     public function reactivar($id = null) {
+        $this->check_permission('Marcas', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -197,6 +244,7 @@ class Marcas extends CI_Controller {
      * Elimina una marca por su ID.
      */
     public function eliminar($id = null) {
+        $this->check_permission('Marcas', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')

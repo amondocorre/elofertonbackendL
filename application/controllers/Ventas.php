@@ -44,8 +44,8 @@ class Ventas extends CI_Controller {
         $esMayorista = ($depositoObj && $depositoObj->tipo_almacen === 'Deposito_Central');
         
         $precioSelect = $esMayorista 
-            ? 'COALESCE(MAX(i.preciomayor), MAX(i.precioventa), MAX(p.nuevoprecio), MAX(p.precioventa))' 
-            : 'COALESCE(MAX(i.precioventa), MAX(p.precioventa))';
+            ? 'COALESCE(NULLIF(MAX(p.nuevoprecio), 0), MAX(p.precioventa))' 
+            : 'MAX(p.precioventa)';
   
         // Seleccionar datos de productos con su stock consolidado para el depósito actual (vía LEFT JOIN)
         $this->db->select('
@@ -151,6 +151,7 @@ class Ventas extends CI_Controller {
             if (!$inv && !empty($item['idprod'])) {
                 $inv = $this->db->where('idprod', $item['idprod'])
                                 ->where('deposito', $depositoId)
+                                ->order_by('precioventa', 'DESC')
                                 ->get('inventarios')
                                 ->row();
                 if ($inv) {
@@ -158,10 +159,15 @@ class Ventas extends CI_Controller {
                 }
             }
 
-            // 3. Si aún no existe el lote en este depósito, creamos un lote virtual con cantidad 0
-            if (!$inv && !empty($item['idprod'])) {
-                $prodMaster = $this->db->where('idprod', $item['idprod'])->get('productos')->row();
-                if ($prodMaster) {
+            // 3. Buscar siempre en el catálogo maestro para los precios base
+            $prodMaster = null;
+            $idprodSearch = $item['idprod'] ?? ($inv ? $inv->idprod : null);
+            if ($idprodSearch) {
+                $prodMaster = $this->db->where('idprod', $idprodSearch)->get('productos')->row();
+            }
+
+            // 4. Si aún no existe el lote en este depósito, creamos un lote virtual con cantidad 0
+            if (!$inv && $prodMaster) {
                     $nuevoLote = [
                         'idprod' => $prodMaster->idprod,
                         'descripcion' => $prodMaster->descripcion,
@@ -187,7 +193,6 @@ class Ventas extends CI_Controller {
                         $item['id'] = $inv->id; // Actualizar el ID del item
                     }
                 }
-            }
 
             if (!$inv) {
                 return $this->output
@@ -200,8 +205,13 @@ class Ventas extends CI_Controller {
             $depositoObj = $this->db->select('tipo_almacen')->where('id', intval($inv->deposito))->get('depositos')->row();
             $esMayorista = ($depositoObj && $depositoObj->tipo_almacen === 'Deposito_Central');
             
-            $precioLista = floatval($esMayorista ? ($inv->preciomayor ?? $inv->precioventa) : $inv->precioventa) * $impuestoFactor;
-            $comision = floatval($inv->comision) * $impuestoFactor;
+            $precioBaseMayorista = ($prodMaster->nuevoprecio > 0) ? $prodMaster->nuevoprecio : 0;
+            $precioBaseMinorista = $prodMaster->precioventa;
+            
+            $precioListaBase = floatval($esMayorista && $precioBaseMayorista > 0 ? $precioBaseMayorista : $precioBaseMinorista);
+            $precioLista = ceil($precioListaBase * $impuestoFactor);
+            $comisionBase = ($inv && $inv->comision > 0) ? $inv->comision : $prodMaster->comision;
+            $comision = floatval($comisionBase) * $impuestoFactor;
             $precioVenta = floatval($item['precioventa']);
 
             if ($comision > 0) {
@@ -330,9 +340,9 @@ class Ventas extends CI_Controller {
                     'precioventa' => $item['precioventa'],
                     'preciofinal' => $item['precioventa'],
                     'cuantos' => $descuento,
+                    'comision' => floatval($prodMaster->comision) * $descuento,
                     'descripcion' => $item['descripcion'] ?? $lote->descripcion,
                     'vendedor' => $data['vendedor'] ?? 1,
-                    'comision' => floatval($lote->comision) * $descuento,
                     'pagocomision' => null,
                     'observaciones' => '',
                     'cierre' => null
@@ -369,9 +379,9 @@ class Ventas extends CI_Controller {
                     'precioventa' => $item['precioventa'],
                     'preciofinal' => $item['precioventa'],
                     'cuantos' => $cantPendiente,
+                    'comision' => floatval($prodMaster->comision) * $cantPendiente,
                     'descripcion' => $item['descripcion'] ?? $inv->descripcion,
                     'vendedor' => $data['vendedor'] ?? 1,
-                    'comision' => floatval($inv->comision) * $cantPendiente,
                     'pagocomision' => null,
                     'observaciones' => 'Venta sobregirada (stock negativo)',
                     'cierre' => null
@@ -395,7 +405,10 @@ class Ventas extends CI_Controller {
         // 3. Actualizar estado de proforma si la venta viene de una
         if (!empty($data['origen_proforma_id'])) {
             $this->db->where('idproforma', $data['origen_proforma_id']);
-            $this->db->update('proformas', ['estado' => 'Vendido']);
+            $this->db->update('proformas', [
+                'estado' => 'Vendido',
+                'fecha_venta' => date('Y-m-d H:i:s')
+            ]);
         }
 
         $this->db->trans_complete();
@@ -453,6 +466,7 @@ class Ventas extends CI_Controller {
             'saldo' => abs(($data['pago'] ?? $data['total']) - $data['total']),
             'pagomixto' => $data['pagomixto'] ?? null,
             'comentario' => $data['comentario'] ?? '',
+            'tipo_proforma' => $data['tipo_proforma'] ?? 'normal',
             'con_factura' => $conFactura ? 1 : 0,
             'porcentaje_aplicado' => $conFactura ? $porcentajeImpuesto : 0
         ];
@@ -463,7 +477,7 @@ class Ventas extends CI_Controller {
         foreach ($data['cart'] as $item) {
             $detalleData = [
                 'idproforma' => $idproforma,
-                'idprod' => $item['id'],
+                'idprod' => !empty($item['idprod']) ? $item['idprod'] : $item['id'],
                 'preciolocal' => $item['preciolocal'] ?? 0,
                 'precioventa' => $item['precioventa'],
                 'preciofinal' => $item['precioventa'],
@@ -500,14 +514,20 @@ class Ventas extends CI_Controller {
      * Lista todas las proformas generadas en el sistema.
      */
     public function listar_proformas() {
+        // Expirar proformas pendientes de días anteriores
+        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < CURDATE()");
+
         $fechaInicio = $this->input->get('inicio');
         $fechaFin = $this->input->get('fin');
         $sucursal_activa = $this->input->get_request_header('X-Active-Branch', TRUE);
+        $tipoProforma = $this->input->get('tipo') ?? 'normal';
         
-        $this->db->select('p.id, p.idproforma, p.fecha, p.cliente, p.total, p.estado, u.nombre AS usuario, d.nombre AS sucursal');
+        $this->db->select('p.id, p.idproforma, p.fecha, p.cliente, p.total, p.estado, p.tipo_proforma, u.nombre AS usuario, d.nombre AS sucursal');
         $this->db->from('proformas p');
         $this->db->join('vendedores u', 'p.idusr = u.id', 'left');
         $this->db->join('depositos d', 'p.idneg = d.id', 'left');
+        
+        $this->db->where('p.tipo_proforma', $tipoProforma);
         
         if (!empty($sucursal_activa)) {
             $this->db->where('p.idneg', $sucursal_activa);
@@ -533,6 +553,9 @@ class Ventas extends CI_Controller {
      * Reporte detallado de proformas con múltiples filtros.
      */
     public function reporte_proformas() {
+        // Expirar proformas pendientes de días anteriores
+        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < CURDATE()");
+
         $fechaInicio = $this->input->get('inicio');
         $fechaFin = $this->input->get('fin');
         $sucursal = $this->input->get('sucursal');
@@ -578,7 +601,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, d.nombre AS sucursal, u.nombre AS vendedor_nombre, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, d.nombre AS sucursal, u.nombre AS vendedor_nombre, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
@@ -685,13 +708,33 @@ class Ventas extends CI_Controller {
      */
     public function buscar_proforma() {
         $nro = $this->input->get('nro');
+        $tipoProforma = $this->input->get('tipo') ?? 'normal';
         if (!$nro) {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Número de proforma requerido']));
         }
 
-        $proforma = $this->db->where('id', $nro)->get('proformas')->row();
+        $proforma = $this->db->where('id', $nro)->where('tipo_proforma', $tipoProforma)->get('proformas')->row();
         if (!$proforma) {
-            return $this->output->set_status_header(404)->set_output(json_encode(['error' => 'Proforma no encontrada']));
+            return $this->output->set_status_header(404)->set_output(json_encode(['error' => 'Proforma no encontrada o pertenece a otro módulo']));
+        }
+
+        // Expirar si está pendiente y pasó su tiempo de validez
+        $config_app = $this->db->get('configapp')->row();
+        $dias_proforma = isset($config_app->dias_proforma) ? (int)$config_app->dias_proforma : 1;
+        $fecha_expiracion = date('Y-m-d', strtotime($proforma->fecha . " + $dias_proforma days"));
+
+        if ($proforma->estado === 'Pendiente' && date('Y-m-d') >= $fecha_expiracion) {
+            $this->db->where('id', $nro)->update('proformas', ['estado' => 'Vencido']);
+            $proforma->estado = 'Vencido';
+        }
+
+        $mode = $this->input->get('mode');
+        if ($proforma->estado === 'Vencido' && $mode !== 'view') {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'La proforma está vencida y no puede ser recuperada']));
+        }
+        
+        if (($proforma->estado === 'Vendido' || $proforma->estado === 'Pagado') && $mode !== 'view') {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'La proforma ya ha sido procesada o cobrada.']));
         }
 
         $vendedorRow = $this->db->select('nombre')->where('id', $proforma->vendedor)->get('vendedores')->row();
@@ -752,7 +795,16 @@ class Ventas extends CI_Controller {
         // Enriquecer detalles con información del inventario (código, precio original y stock disponible)
         foreach ($detalles as &$det) {
             $prod = $this->db->select('idprod, precioventa, cantidad')->where('id', $det->idprod)->get('inventarios')->row();
-            $det->codigo = $prod ? $prod->idprod : '';
+            if ($prod) {
+                $det->codigo = $prod->idprod;
+            } else {
+                $prod2 = $this->db->select('idprod')->where('id', $det->idprod)->get('productos')->row();
+                if ($prod2) {
+                    $det->codigo = $prod2->idprod;
+                } else {
+                    $det->codigo = $det->idprod;
+                }
+            }
             $det->precioventaOriginal = $prod ? $prod->precioventa : $det->precioventa;
             $det->stockMaximo = $prod ? $prod->cantidad : $det->cuantos;
         }
@@ -1371,7 +1423,21 @@ class Ventas extends CI_Controller {
         // Cargar biblioteca SIP BISA
         $this->load->library('sip_service');
 
-        $alias = 'BISA_' . time() . '_' . rand(100, 999);
+        $sucursalId = $this->input->post('sucursal_id');
+        $sucursalAlias = 'SUC';
+
+        if ($sucursalId) {
+            $deposito = $this->db->where('id', $sucursalId)->get('depositos')->row();
+            if ($deposito && !empty($deposito->nombre)) {
+                $sucursalAlias = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', substr($deposito->nombre, 0, 8)));
+            }
+        }
+
+        $usuarioId = $this->input->post('usuario_id');
+        error_log("QR GENERATION - POST DATA: " . json_encode($_POST));
+        $usuarioSuffix = $usuarioId ? '_USU_' . $usuarioId : '';
+
+        $alias = 'BISA_' . $sucursalAlias . $usuarioSuffix . '_' . time() . '_' . rand(10, 99);
         $detail = 'Pago Ferreteria Oferton';
 
         $res = $this->sip_service->generateQr($alias, $amount, $detail);
@@ -1639,7 +1705,7 @@ class Ventas extends CI_Controller {
                        COALESCE(SUM(total), 0) as total,
                        COALESCE(SUM(CASE WHEN comentario LIKE '%Orden Web Token:%' OR comentario LIKE '%[WEB_PAGADO]%' THEN total ELSE 0 END), 0) as total_web
                 FROM ventas 
-                WHERE DATE(fecha) = CURDATE() $sucursal_filter_where
+                WHERE DATE(fecha) = '$today' $sucursal_filter_where
                 GROUP BY DATE_FORMAT(fecha, '%H:00')
             ")->result_array();
             $mapped_total = array_column($ventas_db, 'total', 'etiqueta');
@@ -1668,7 +1734,7 @@ class Ventas extends CI_Controller {
                        COALESCE(SUM(total), 0) as total,
                        COALESCE(SUM(CASE WHEN comentario LIKE '%Orden Web Token:%' OR comentario LIKE '%[WEB_PAGADO]%' THEN total ELSE 0 END), 0) as total_web
                 FROM ventas 
-                WHERE fecha >= DATE_SUB(CURDATE(), INTERVAL " . ($dias - 1) . " DAY) $sucursal_filter_where
+                WHERE fecha >= DATE_SUB('$today', INTERVAL " . ($dias - 1) . " DAY) $sucursal_filter_where
                 GROUP BY DATE_FORMAT(fecha, '%Y-%m-%d')
             ")->result_array();
             $mapped_total = array_column($ventas_db, 'total', 'etiqueta');

@@ -1,13 +1,13 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Compras extends CI_Controller {
+class Compras extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -21,6 +21,7 @@ class Compras extends CI_Controller {
      * Obtiene el listado de todas las compras con paginación, filtros y búsqueda.
      */
     public function index() {
+        $this->check_permission('Compras', 'ver');
         $search = $this->input->get('q');
         $proveedor = $this->input->get('proveedor');
         $page = $this->input->get('page') ? intval($this->input->get('page')) : 1;
@@ -119,6 +120,7 @@ class Compras extends CI_Controller {
      * Registra una nueva compra en la base de datos, incrementando stock y precios de inventario.
      */
     public function guardar() {
+        $this->check_permission('Compras', 'crear');
         $data = json_decode(file_get_contents('php://input'), true);
 
         if (empty($data)) {
@@ -285,6 +287,7 @@ class Compras extends CI_Controller {
      * Elimina una compra y descuenta/resta el stock de inventario.
      */
     public function eliminar($idcompra = null) {
+        $this->check_permission('Compras', 'eliminar');
         if (!$idcompra) {
             return $this->output
                 ->set_content_type('application/json')

@@ -8,9 +8,9 @@ defined('BASEPATH') or exit('No direct script access allowed');
  */
 class PasarelaQr extends CI_Controller
 {
-    // Credenciales de Basic Auth para el Callback del banco
-    private const BASIC_AUTH_USER = 'bisa_sip_callback';
-    private const BASIC_AUTH_PASS = 'BisaSipSecure2026!';
+    // Credenciales esperadas en el webhook de BISA (provistas/configuradas en el banco)
+    private const BASIC_AUTH_USER = 'qruserXXLprod1';
+    private const BASIC_AUTH_PASS = 'Mamier@dmin2024';
 
     public function __construct()
     {
@@ -18,7 +18,7 @@ class PasarelaQr extends CI_Controller
 
         // Habilitar CORS para peticiones desde el frontend
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
 
         if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -168,8 +168,8 @@ class PasarelaQr extends CI_Controller
         $callbackUrl = site_url('PasarelaQr/callback_pago');
         
         // Si el servidor está detrás de un proxy (como Dokploy/Traefik) y genera la IP privada del contenedor (ej: 10.0.1.94),
-        // forzamos el uso del dominio público para que el banco pueda resolver el webhook.
-        if (preg_match('/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)/', $callbackUrl)) {
+        // forzamos el uso del dominio público para que el banco pueda resolver el webhook. Incluimos también [::1].
+        if (preg_match('/(localhost|127\.0\.0\.1|\[::1\]|\[::11|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)/', $callbackUrl)) {
             $callbackUrl = 'https://apidemo.mamier.cloud/index.php/PasarelaQr/callback_pago';
         }
 
@@ -185,12 +185,14 @@ class PasarelaQr extends CI_Controller
         ];
 
         $response = $this->sendPostRequest($url, $headers, $body);
+        log_message('error', 'Raw CURL Response PasarelaQr: ' . var_export($response, true));
         $simulated = false;
         $idQr = null;
         $qrBase64 = null;
 
         if ($response) {
             $resData = json_decode($response, true);
+            log_message('error', 'Respuesta generaQr BISA: ' . $response);
             $code = $resData['codigo'] ?? '';
             $message = $resData['mensaje'] ?? '';
 
@@ -329,8 +331,6 @@ class PasarelaQr extends CI_Controller
         if ($proforma) {
             $this->db->where('idproforma', $proforma->idproforma)->update('proformas', [
                 'estado' => 'PAGADO',
-                'idQr' => $idQr,
-                'numeroOrdenOriginante' => $numeroOrdenOriginante,
                 'formapago' => 'qr_bisa',
                 'pago' => $amount,
                 'saldo' => 0
@@ -669,6 +669,35 @@ class PasarelaQr extends CI_Controller
     }
 
     /**
+     * Inhabilita un QR generado en SIP BISA
+     */
+    public function inhabilitar_qr($alias = null)
+    {
+        // Validar acceso o permitir uso general ya que se cancela un QR no pagado
+        $this->output->set_content_type('application/json');
+
+        if (empty($alias)) {
+            $this->output->set_output(json_encode(['status' => 'error', 'message' => 'Alias no proporcionado']));
+            return;
+        }
+
+        $this->load->library('sip_service');
+        $success = $this->sip_service->inhabilitarQr($alias);
+
+        if ($success) {
+            // Opcional: Actualizar el estado en la base de datos local
+            $this->db->where('alias', $alias);
+            $this->db->update('bisa_qr_transacciones', [
+                'estado' => 'INHABILITADO'
+            ]);
+
+            $this->output->set_output(json_encode(['status' => 'success', 'message' => 'QR inhabilitado correctamente']));
+        } else {
+            $this->output->set_output(json_encode(['status' => 'error', 'message' => 'No se pudo inhabilitar el QR']));
+        }
+    }
+
+    /**
      * Endpoint público para visualizar el código QR como imagen.
      * Útil para enviar por enlaces de WhatsApp.
      */
@@ -712,6 +741,11 @@ class PasarelaQr extends CI_Controller
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
 
         $response = curl_exec($ch);
+        if ($response === false) {
+            log_message('error', 'PasarelaQr cURL Error: ' . curl_error($ch));
+        } else {
+            log_message('error', 'PasarelaQr cURL Response: ' . $response);
+        }
         curl_close($ch);
 
         return $response;

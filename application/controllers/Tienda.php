@@ -7,7 +7,7 @@ class Tienda extends CI_Controller {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -43,18 +43,17 @@ class Tienda extends CI_Controller {
                 
                 $roles_lower = array_map('strtolower', $roles);
                 
-                if (in_array('vendedores', $roles_lower) || in_array('vendedor', $roles_lower) || in_array('admin', $roles_lower) || in_array('administrador', $roles_lower) || in_array('administradores', $roles_lower)) {
+                if (in_array('vendedores', $roles_lower) || in_array('vendedor', $roles_lower) || in_array('admin', $roles_lower) || in_array('administrador', $roles_lower) || in_array('administradores', $roles_lower) || in_array('enc. tienda y caja', $roles_lower) || in_array('encargado de tienda', $roles_lower) || in_array('editor', $roles_lower)) {
                     $is_vendedor = true;
                 }
             }
         }
 
         // Obtener marcas únicas (antes de iniciar la consulta principal)
-        $this->db->select('m.nombre as marca');
+        $this->db->select('m.nombre as marca, m.logo');
         $this->db->from('productos p');
         $this->db->join('marcas m', 'p.idmarca = m.id', 'inner');
-        $this->db->join('inventarios i', 'p.idprod = i.idprod', 'inner');
-        $this->db->where('i.cantidad >', 0);
+        $this->db->join('inventarios i', 'p.idprod = i.idprod', 'left');
         $this->db->where('p.estado', 'Activo');
         $this->db->distinct();
         $this->db->order_by('m.nombre', 'ASC');
@@ -63,39 +62,42 @@ class Tienda extends CI_Controller {
         $marcas = [];
         foreach ($marcas_result as $row) {
             if (!empty($row['marca'])) {
-                $marcas[] = $row['marca'];
+                $marcas[] = [
+                    'nombre' => $row['marca'],
+                    'logo' => $row['logo'] ?? null
+                ];
             }
         }
 
         // Campos base: JOIN con tabla 'inventarios' para obtener stock y precio por sucursal
         $select_fields = '
-            inventarios.id,
+            COALESCE(MAX(inventarios.id), MAX(p.id)) as id,
             p.idprod,
-            p.descripcion AS descripcion,
-            c.descripcion AS categoria,
-            m.nombre AS marca,
-            inventarios.unidad,
-            inventarios.precioventa,
-            inventarios.deposito AS sucursal,
-            NULLIF(p.imagen, \'\') AS imagen
+            MAX(p.descripcion) AS descripcion,
+            MAX(c.descripcion) AS categoria,
+            MAX(m.nombre) AS marca,
+            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), \'unid\') AS unidad,
+            MAX(p.precioventa) AS precioventa,
+            MAX(p.nuevoprecio) AS preciomayor,
+            COALESCE(MAX(inventarios.deposito), 1) AS sucursal,
+            NULLIF(MAX(p.imagen), \'\') AS imagen
         ';
         
         if ($is_vendedor) {
-            $select_fields .= ', inventarios.cantidad, inventarios.comision';
-            $select_fields .= ', (SELECT COUNT(*) FROM vendedor_favoritos WHERE id_producto = inventarios.id AND id_vendedor = ' . (int)$vendedor_id . ') as is_favorito';
+            $select_fields .= ', COALESCE(SUM(inventarios.cantidad), 0) AS cantidad, COALESCE(MAX(p.comision), 0) AS comision';
+            $select_fields .= ', MAX((SELECT COUNT(*) FROM vendedor_favoritos WHERE id_producto = COALESCE(inventarios.id, p.id) AND id_vendedor = ' . (int)$vendedor_id . ')) as is_favorito';
         }
 
         $this->db->select($select_fields, FALSE);
         $this->db->from('productos p');
-        $this->db->join('inventarios', 'p.idprod = inventarios.idprod', 'inner', FALSE);
+        if (!empty($sucursal) && $sucursal !== '0') {
+            $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = ' . (int)$sucursal, 'left', FALSE);
+        } else {
+            $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = 1', 'left', FALSE);
+        }
         $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left', FALSE);
         $this->db->join('marcas m', 'p.idmarca = m.id', 'left', FALSE);
-        $this->db->where('inventarios.cantidad >', 0);
         $this->db->where('p.estado', 'Activo');
-
-        if (!empty($sucursal) && $sucursal !== '0') {
-            $this->db->where('inventarios.deposito', $sucursal);
-        }
 
         if (!empty($marca) && $marca !== 'Todas') {
             $this->db->where('m.nombre', $marca);
@@ -108,6 +110,9 @@ class Tienda extends CI_Controller {
             $this->db->or_like('p.idprod', $search_escaped, 'both', FALSE);
             $this->db->group_end();
         }
+
+        $this->db->group_by('p.idprod');
+
 
         $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
         $productos = $this->db->get()->result();
@@ -475,6 +480,9 @@ class Tienda extends CI_Controller {
      * GET /tienda/listar_proformas_vendedor?vendedor_id=X
      */
     public function listar_proformas_vendedor() {
+        // Expirar proformas pendientes de días anteriores
+        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < CURDATE()");
+
         $sellerId = $this->input->get('vendedor_id');
 
         if (empty($sellerId)) {
@@ -491,9 +499,10 @@ class Tienda extends CI_Controller {
             return;
         }
 
-        $this->db->select('p.id, p.idproforma, p.fecha, p.cliente, p.nit, p.telefono, p.total, p.estado, p.formapago, d.nombre AS sucursal_nombre');
+        $this->db->select('p.id, p.idproforma, p.fecha, p.fecha_venta, p.cliente, p.nit, p.telefono, p.total, p.estado, p.formapago, d.nombre AS sucursal_nombre, qr.alias AS qr_alias, qr.qr_base64');
         $this->db->from('proformas p');
         $this->db->join('depositos d', 'p.idneg = d.id', 'left');
+        $this->db->join('bisa_qr_transacciones qr', 'p.idproforma = qr.id_proforma', 'left');
         $this->db->where('p.vendedor', $sellerId);
         $this->db->order_by('p.fecha', 'DESC');
         $proformas = $this->db->get()->result();

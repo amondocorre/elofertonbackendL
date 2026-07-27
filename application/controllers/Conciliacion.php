@@ -13,7 +13,7 @@ class Conciliacion extends MY_Controller
         
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, Authorization, X-User-Id, X-Rol-Id');
+        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         header('Access-Control-Max-Age: 86400');
         
@@ -532,14 +532,19 @@ class Conciliacion extends MY_Controller
                 ->set_output(json_encode(['error' => 'El almacen_id es requerido.']));
         }
 
-        $this->db->select('producto_id, stock');
-        $this->db->from('inventario_stock');
-        $this->db->where('almacen_id', intval($almacenId));
+        $this->db->select('p.id as producto_id, SUM(i.cantidad) as stock');
+        $this->db->from('inventarios i');
+        $this->db->join('productos p', 'p.idprod = i.idprod', 'left');
+        $this->db->where('i.deposito', intval($almacenId));
+        $this->db->where('i.cantidad >', 0);
+        $this->db->group_by('p.id');
         $query = $this->db->get();
 
         $stockMap = [];
         foreach ($query->result_array() as $row) {
-            $stockMap[$row['producto_id']] = intval($row['stock']);
+            if (!empty($row['producto_id'])) {
+                $stockMap[$row['producto_id']] = floatval($row['stock']);
+            }
         }
 
         return $this->output

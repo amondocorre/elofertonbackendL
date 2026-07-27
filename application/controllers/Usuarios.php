@@ -7,7 +7,7 @@ class Usuarios extends CI_Controller {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -70,6 +70,7 @@ class Usuarios extends CI_Controller {
         $direccion = $data['direccion'] ?? '';
         $carnet = $data['carnet'] ?? '';
         $estado = $data['estado'] ?? 'activo';
+        $cargo = $data['cargo'] ?? null;
 
         // Validaciones en servidor
         if (empty($nombre) || empty($email)) {
@@ -100,15 +101,29 @@ class Usuarios extends CI_Controller {
                 ->set_output(json_encode(['error' => 'El Email/Usuario ya está registrado']));
         }
 
+        // Obtener id_rol correspondiente al rol principal
+        $rolMap = [
+            'Administradores' => 'Administrador',
+            'Vendedores' => 'Vendedor',
+            'Enc. Tienda y caja' => 'Encargado de tienda',
+            'editor' => 'Editor'
+        ];
+        $mappedRol = $rolMap[$rol] ?? $rol;
+        
+        $rolRow = $this->db->get_where('roles', ['nombre_rol' => $mappedRol])->row();
+        $id_rol = $rolRow ? $rolRow->id : 2; // Vendedor por defecto
+
         $saveData = [
             'nombre' => $nombre,
             'email' => $email,
             'rol' => $rol,
+            'id_rol' => $id_rol,
             'ciudad' => $ciudad,
             'telefono' => $telefono,
             'direccion' => $direccion,
             'carnet' => $carnet,
-            'estado' => $estado
+            'estado' => $estado,
+            'cargo' => $cargo
         ];
 
         // Solo actualizar contraseña si se ha proporcionado una nueva

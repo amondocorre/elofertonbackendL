@@ -1,13 +1,13 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Proveedores extends CI_Controller {
+class Proveedores extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
         // Configuración de cabeceras CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method');
+        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, X-User-Id, X-Rol-Id, X-Active-Branch, Authorization');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         header('Access-Control-Max-Age: 86400');
         
@@ -22,6 +22,7 @@ class Proveedores extends CI_Controller {
      * Obtiene el listado de proveedores paginado y filtrado.
      */
     public function index() {
+        $this->check_permission('Proveedores', 'ver');
         $search = $this->input->get('q');
         $page = $this->input->get('page') ? intval($this->input->get('page')) : null;
         $limit = $this->input->get('limit') ? intval($this->input->get('limit')) : 50;
@@ -101,17 +102,17 @@ class Proveedores extends CI_Controller {
                 ->set_output(json_encode(['error' => 'El nombre del proveedor es obligatorio']));
         }
 
-        if (empty($data['nit'])) {
-            return $this->output
-                ->set_content_type('application/json')
-                ->set_status_header(400)
-                ->set_output(json_encode(['error' => 'El NIT / Identificación es obligatorio']));
-        }
+
 
         $id = isset($data['id']) ? intval($data['id']) : null;
+        if ($id) {
+            $this->check_permission('Proveedores', 'editar');
+        } else {
+            $this->check_permission('Proveedores', 'crear');
+        }
         $name = mb_strtoupper(trim($data['nombre']), 'UTF-8');
         $contact = isset($data['contacto']) ? mb_strtoupper(trim($data['contacto']), 'UTF-8') : '';
-        $nit = trim($data['nit']);
+        $nit = isset($data['nit']) ? trim($data['nit']) : '';
 
         // Validación de Proveedor Duplicado por nombre
         $this->db->where('nombre', $name);
@@ -129,25 +130,27 @@ class Proveedores extends CI_Controller {
                 ]));
         }
 
-        // Validación de Proveedor Duplicado por NIT
-        $this->db->where('nit', $nit);
-        if ($id) {
-            $this->db->where('id !=', $id);
-        }
-        $query_nit = $this->db->get('proveedores');
-        
-        if ($query_nit->num_rows() > 0) {
-            return $this->output
-                ->set_content_type('application/json')
-                ->set_status_header(400)
-                ->set_output(json_encode([
-                    'error' => "Ya existe un proveedor registrado con el NIT '$nit'."
-                ]));
+        // Validación de Proveedor Duplicado por NIT solo si se proporciona un NIT
+        if (!empty($nit)) {
+            $this->db->where('nit', $nit);
+            if ($id) {
+                $this->db->where('id !=', $id);
+            }
+            $query_nit = $this->db->get('proveedores');
+            
+            if ($query_nit->num_rows() > 0) {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(400)
+                    ->set_output(json_encode([
+                        'error' => "Ya existe un proveedor registrado con el NIT '$nit'."
+                    ]));
+            }
         }
 
         $supplier_data = [
             'nombre'        => $name,
-            'nit'           => trim($data['nit']),
+            'nit'           => isset($data['nit']) ? trim($data['nit']) : '',
             'contacto'      => $contact,
             'telefono'      => isset($data['telefono']) ? trim($data['telefono']) : '',
             'telefono_fijo' => isset($data['telefono_fijo']) ? trim($data['telefono_fijo']) : '',
@@ -185,6 +188,7 @@ class Proveedores extends CI_Controller {
      * Inactiva un proveedor (baja lógica).
      */
     public function inactivar($id = null) {
+        $this->check_permission('Proveedores', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -212,6 +216,7 @@ class Proveedores extends CI_Controller {
      * Reactiva un proveedor.
      */
     public function reactivar($id = null) {
+        $this->check_permission('Proveedores', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -235,6 +240,7 @@ class Proveedores extends CI_Controller {
      * Elimina un proveedor por su ID.
      */
     public function eliminar($id = null) {
+        $this->check_permission('Proveedores', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')

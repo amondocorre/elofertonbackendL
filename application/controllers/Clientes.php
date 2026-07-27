@@ -1,13 +1,13 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Clientes extends CI_Controller {
+class Clientes extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
         // Configuración de cabeceras CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method');
+        header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, X-User-Id, X-Rol-Id, X-Active-Branch, Authorization');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         header('Access-Control-Max-Age: 86400');
         
@@ -22,17 +22,26 @@ class Clientes extends CI_Controller {
      * Obtiene el listado de clientes paginado y filtrado de forma ultra-rápida.
      */
     public function index() {
+        $this->check_permission('Clientes', 'ver');
         $search = $this->input->get('q');
         $page = $this->input->get('page') ? intval($this->input->get('page')) : null;
         $limit = $this->input->get('limit') ? intval($this->input->get('limit')) : 100;
+        $tipoFilter = $this->input->get('tipo'); // e.g. "minorista" or "mayorista"
         
         // 1. Obtener conteo de registros para paginación
-        $count_sql = "SELECT COUNT(*) as total FROM clientes";
+        $count_sql = "SELECT COUNT(*) as total FROM clientes WHERE 1=1";
         if (!empty($search)) {
             $search_escaped = $this->db->escape_like_str(trim($search));
-            $count_sql .= " WHERE nombre LIKE '%$search_escaped%' 
+            $count_sql .= " AND (nombre LIKE '%$search_escaped%' 
                              OR nit LIKE '%$search_escaped%' 
-                             OR telefono LIKE '%$search_escaped%' ";
+                             OR telefono LIKE '%$search_escaped%') ";
+        }
+        if (!empty($tipoFilter)) {
+            if ($tipoFilter === 'ventas') {
+                $count_sql .= " AND tipo_cliente IN ('Minorista', 'Ambos', 'Final') ";
+            } else {
+                $count_sql .= " AND tipo_cliente = " . $this->db->escape($tipoFilter);
+            }
         }
         $total_query = $this->db->query($count_sql);
         $total_records = intval($total_query->row()->total);
@@ -44,13 +53,22 @@ class Clientes extends CI_Controller {
                    (SELECT COUNT(*) FROM ventas WHERE ventas.idcliente = clientes.id) as cant 
             FROM clientes 
             LEFT JOIN vendedores ON clientes.id_usuario_baja = vendedores.id
+            WHERE 1=1
         ";
         
         if (!empty($search)) {
             $search_escaped = $this->db->escape_like_str(trim($search));
-            $sql .= " WHERE clientes.nombre LIKE '%$search_escaped%' 
+            $sql .= " AND (clientes.nombre LIKE '%$search_escaped%' 
                        OR clientes.nit LIKE '%$search_escaped%' 
-                       OR clientes.telefono LIKE '%$search_escaped%' ";
+                       OR clientes.telefono LIKE '%$search_escaped%') ";
+        }
+
+        if (!empty($tipoFilter)) {
+            if ($tipoFilter === 'ventas') {
+                $sql .= " AND clientes.tipo_cliente IN ('Minorista', 'Ambos', 'Final') ";
+            } else {
+                $sql .= " AND clientes.tipo_cliente = " . $this->db->escape($tipoFilter);
+            }
         }
         
         $sql .= " ORDER BY clientes.nombre ASC";
@@ -178,7 +196,14 @@ class Clientes extends CI_Controller {
      */
     public function guardar() {
         $raw_input = file_get_contents('php://input');
-        $data = json_decode($raw_input, true);
+        $data_pre = json_decode($raw_input, true);
+        $id_pre = isset($data_pre['id']) ? intval($data_pre['id']) : null;
+        if ($id_pre) {
+            $this->check_permission('Clientes', 'editar');
+        } else {
+            $this->check_permission('Clientes', 'crear');
+        }
+        $data = $data_pre;
 
         if (!$data) {
             return $this->output
@@ -192,15 +217,15 @@ class Clientes extends CI_Controller {
         $telefono = isset($data['telefono']) ? trim($data['telefono']) : (isset($data['celular']) ? trim($data['celular']) : null);
         $complemento = isset($data['complemento']) ? trim($data['complemento']) : null;
 
-        if (empty($data['nombre']) || empty($nit) || empty($telefono)) {
+        if (empty($data['nombre']) || empty($telefono)) {
             return $this->output
                 ->set_content_type('application/json')
                 ->set_status_header(400)
-                ->set_output(json_encode(['error' => 'El nombre, NIT/CI y celular son obligatorios.']));
+                ->set_output(json_encode(['error' => 'El nombre y celular son obligatorios.']));
         }
 
         // Validar que el NIT/CI contenga solo números
-        if (!preg_match('/^\d+$/', $nit)) {
+        if (!empty($nit) && !preg_match('/^\d+$/', $nit)) {
             return $this->output
                 ->set_content_type('application/json')
                 ->set_status_header(400)
@@ -246,7 +271,8 @@ class Clientes extends CI_Controller {
             'extension'     => isset($data['extension']) ? trim($data['extension']) : null,
             'ubicaciongps'  => isset($data['ubicaciongps']) ? trim($data['ubicaciongps']) : null,
             'cianverso'     => isset($data['cianverso']) ? trim($data['cianverso']) : null,
-            'cireverso'     => isset($data['cireverso']) ? trim($data['cireverso']) : null
+            'cireverso'     => isset($data['cireverso']) ? trim($data['cireverso']) : null,
+            'tipo_cliente'  => isset($data['tipo_cliente']) ? trim($data['tipo_cliente']) : 'Final'
         ];
 
         if ($id) {
@@ -278,6 +304,7 @@ class Clientes extends CI_Controller {
      * Elimina un cliente por su ID
      */
     public function eliminar($id = null) {
+        $this->check_permission('Clientes', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -308,6 +335,7 @@ class Clientes extends CI_Controller {
      * Inactiva un cliente registrando el usuario que dio de baja
      */
     public function inactivar($id = null) {
+        $this->check_permission('Clientes', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')
@@ -335,6 +363,7 @@ class Clientes extends CI_Controller {
      * Reactiva un cliente
      */
     public function reactivar($id = null) {
+        $this->check_permission('Clientes', 'eliminar');
         if (!$id) {
             return $this->output
                 ->set_content_type('application/json')

@@ -1,13 +1,13 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
-class Transferencias extends CI_Controller {
+class Transferencias extends MY_Controller {
 
     public function __construct() {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -21,41 +21,40 @@ class Transferencias extends CI_Controller {
      * Obtiene el listado de transferencias
      */
     public function index() {
-        $this->db->select('t.*, o.nombre as origen_nombre, d.nombre as destino_nombre, u.nombre as usuario_nombre');
-        $this->db->from('transferencias t');
-        $this->db->join('depositos o', 't.almacen_origen_id = o.id', 'left');
-        $this->db->join('depositos d', 't.almacen_destino_id = d.id', 'left');
-        $this->db->join('vendedores u', 't.usuario_id = u.id', 'left'); // users are in vendedores table mostly? Let's check users vs vendedores.
-        // Wait, the system uses `users` or `vendedores`. Other controllers join with `vendedores` as `u`.
-        // Let's use `vendedores` for now, or just `users` if it's the auth user. In MY_Controller it checks users.
-        // Actually I will join with `users` because authUser.id comes from users.
-        // But let's select from users instead.
-        
-        // Correction: the user table is `users`.
-        $this->db->order_by('t.fecha', 'DESC');
-        $query = $this->db->get();
-        $result = $query->result_array();
-        
-        // We will try to map users from `users` table since `t.usuario_id` comes from authUser.id which is `users.id`
-        // But to be safe if it doesn't join we'll do it manually or via another join.
-        // Let's fix the join for users
+        $this->check_permission('Transferencias', 'ver');
         $this->db->select('t.*, o.nombre as origen_nombre, d.nombre as destino_nombre, u.name as usuario_nombre');
         $this->db->from('transferencias t');
         $this->db->join('depositos o', 't.almacen_origen_id = o.id', 'left');
         $this->db->join('depositos d', 't.almacen_destino_id = d.id', 'left');
         $this->db->join('users u', 't.usuario_id = u.id', 'left');
+
+        $start_date = $this->input->get('start_date');
+        $end_date = $this->input->get('end_date');
+        $origen_id = $this->input->get('origen_id');
+
+        if (!empty($start_date)) {
+            $this->db->where('DATE(t.fecha) >=', $start_date);
+        }
+        if (!empty($end_date)) {
+            $this->db->where('DATE(t.fecha) <=', $end_date);
+        }
+        if (!empty($origen_id)) {
+            $this->db->where('t.almacen_origen_id', $origen_id);
+        }
+
         $this->db->order_by('t.fecha', 'DESC');
-        $query2 = $this->db->get();
+        $query = $this->db->get();
 
         return $this->output
             ->set_content_type('application/json')
-            ->set_output(json_encode($query2->result_array()));
+            ->set_output(json_encode($query->result_array()));
     }
 
     /**
      * Obtiene el detalle de una transferencia
      */
     public function detalle($id) {
+        $this->check_permission('Transferencias', 'ver');
         $this->db->select('td.*, p.descripcion, p.marca, p.categoria, p.unidad');
         $this->db->from('transferencia_detalles td');
         $this->db->join('productos p', 'td.producto_id = p.id', 'left');
@@ -71,6 +70,7 @@ class Transferencias extends CI_Controller {
      * Guarda una nueva transferencia y procesa el inventario
      */
     public function guardar() {
+        $this->check_permission('Transferencias', 'crear');
         $data = json_decode(file_get_contents('php://input'), true);
 
         $origen_id = isset($data['almacen_origen_id']) ? intval($data['almacen_origen_id']) : null;

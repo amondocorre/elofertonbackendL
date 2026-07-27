@@ -11,7 +11,7 @@ class Caja extends CI_Controller {
         // CORS Headers
         header('Access-Control-Allow-Origin: *');
         header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
-        header("Access-Control-Allow-Headers: Content-Type, Content-Length, Accept-Encoding, Authorization");
+        header('Access-Control-Allow-Headers: Content-Type, Content-Length, Accept-Encoding, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
             exit();
@@ -24,20 +24,28 @@ class Caja extends CI_Controller {
      */
     public function estado_caja() {
         $usuario_id = $this->input->get('usuario_id');
-        if (!$usuario_id) {
-            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID de usuario requerido']));
+        $sucursal_id = $this->input->get('sucursal_id');
+        if (!$usuario_id || !$sucursal_id) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID de usuario y sucursal requeridos']));
         }
 
-        // Buscar caja abierta para este usuario
+        // Buscar caja abierta para este usuario en esta sucursal
         $caja = $this->db->where('usuario_id', $usuario_id)
+                         ->where('sucursal_id', $sucursal_id)
                          ->where('estado', 'Abierta')
                          ->get('sesiones_caja')
                          ->row();
 
         if (!$caja) {
+            $otra_caja = $this->db->where('sucursal_id', $sucursal_id)
+                                  ->where('estado', 'Abierta')
+                                  ->get('sesiones_caja')
+                                  ->row();
             return $this->output->set_content_type('application/json')->set_output(json_encode([
                 'estado' => 'Cerrada',
-                'caja' => null
+                'caja' => null,
+                'abierta_por_otro_usuario' => $otra_caja ? true : false,
+                'usuario_caja_abierta' => $otra_caja ? $otra_caja->usuario_id : null
             ]));
         }
 
@@ -144,30 +152,41 @@ class Caja extends CI_Controller {
     public function abrir_caja() {
         $data = json_decode(file_get_contents('php://input'), true);
         $usuario_id = $data['usuario_id'] ?? null;
+        $sucursal_id = $data['sucursal_id'] ?? null;
         $monto_apertura = floatval($data['monto_apertura'] ?? 0);
 
-        if (!$usuario_id) {
-            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Usuario inválido']));
+        if (!$usuario_id || !$sucursal_id) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Usuario o sucursal inválido']));
         }
 
-        // Verificar si ya tiene una caja abierta
-        $caja_existente = $this->db->where('usuario_id', $usuario_id)->where('estado', 'Abierta')->get('sesiones_caja')->row();
+        // Adquirir un bloqueo (lock) en MySQL para evitar race conditions simultáneas
+        $lock_name = 'abrir_caja_sucursal_' . $sucursal_id;
+        $this->db->query("SELECT GET_LOCK(?, 10)", [$lock_name]);
+
+        // Verificar si la sucursal ya tiene una caja abierta
+        $caja_existente = $this->db->where('sucursal_id', $sucursal_id)->where('estado', 'Abierta')->get('sesiones_caja')->row();
         if ($caja_existente) {
-            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'El usuario ya tiene una caja abierta.']));
+            $this->db->query("SELECT RELEASE_LOCK(?)", [$lock_name]);
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'La sucursal ya tiene una caja abierta.']));
         }
 
         $cajaData = [
             'usuario_id' => $usuario_id,
+            'sucursal_id' => $sucursal_id,
             'monto_apertura' => $monto_apertura,
             'estado' => 'Abierta',
             'fecha_apertura' => date('Y-m-d H:i:s')
         ];
 
         $this->db->insert('sesiones_caja', $cajaData);
+        $new_caja_id = $this->db->insert_id();
+
+        // Liberar el bloqueo
+        $this->db->query("SELECT RELEASE_LOCK(?)", [$lock_name]);
 
         return $this->output->set_content_type('application/json')->set_output(json_encode([
             'message' => 'Caja abierta exitosamente',
-            'caja_id' => $this->db->insert_id()
+            'caja_id' => $new_caja_id
         ]));
     }
 
@@ -202,11 +221,13 @@ class Caja extends CI_Controller {
         $usuario_id = $data['usuario_id'] ?? null;
         $monto_cierre = floatval($data['monto_cierre'] ?? 0);
 
-        if (!$usuario_id) {
-            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID de usuario inválido']));
+        $sucursal_id = $data['sucursal_id'] ?? null;
+
+        if (!$usuario_id || !$sucursal_id) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID de usuario y sucursal inválidos']));
         }
 
-        $caja = $this->db->where('usuario_id', $usuario_id)->where('estado', 'Abierta')->get('sesiones_caja')->row();
+        $caja = $this->db->where('usuario_id', $usuario_id)->where('sucursal_id', $sucursal_id)->where('estado', 'Abierta')->get('sesiones_caja')->row();
         
         if ($caja) {
             $this->db->where('id', $caja->id)->update('sesiones_caja', [
