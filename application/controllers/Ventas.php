@@ -407,6 +407,7 @@ class Ventas extends CI_Controller {
             $this->db->where('idproforma', $data['origen_proforma_id']);
             $this->db->update('proformas', [
                 'estado' => 'Vendido',
+                'formapago' => $data['formapago'] ?? 'Efectivo',
                 'fecha_venta' => date('Y-m-d H:i:s')
             ]);
         }
@@ -601,7 +602,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, d.nombre AS sucursal, u.nombre AS vendedor_nombre, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, d.nombre AS sucursal, u.nombre AS vendedor_nombre, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
