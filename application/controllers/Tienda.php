@@ -36,18 +36,22 @@ class Tienda extends CI_Controller {
             if ($vendedor) {
                 // Obtener roles múltiples
                 $rolesQuery = $this->db->get_where('vendedores_roles', ['vendedor_id' => $vendedor->id])->result();
-                $roles = array_column($rolesQuery, 'rol');
-                if (empty($roles) && !empty($vendedor->rol)) {
-                    $roles = [$vendedor->rol];
+                $roles_lower = array();
+                foreach ($rolesQuery as $rq) {
+                    if (!empty($rq->rol)) {
+                        $roles_lower[] = trim(strtolower($rq->rol));
+                    }
                 }
-                
-                $roles_lower = array_map('strtolower', $roles);
+                if (empty($roles_lower) && !empty($vendedor->rol)) {
+                    $roles_lower[] = trim(strtolower($vendedor->rol));
+                }
                 
                 if (in_array('vendedores', $roles_lower) || in_array('vendedor', $roles_lower) || in_array('admin', $roles_lower) || in_array('administrador', $roles_lower) || in_array('administradores', $roles_lower) || in_array('enc. tienda y caja', $roles_lower) || in_array('encargado de tienda', $roles_lower) || in_array('editor', $roles_lower)) {
                     $is_vendedor = true;
                 }
             }
         }
+        log_message('error', "TIENDA API: vendedor_id=" . json_encode($vendedor_id) . " is_vendedor=" . ($is_vendedor ? 'true' : 'false'));
 
         // Obtener marcas únicas (antes de iniciar la consulta principal)
         $this->db->select('m.nombre as marca, m.logo');
