@@ -143,6 +143,13 @@ class VentasMayorista extends MY_Controller {
         $comment = trim(($data['comentario'] ?? '') . ' [MAYOR]');
         $this->db->insert('ventas', ['idneg'=>$data['idneg']??'1','idventa'=>$idventa,'total'=>$data['total'],'cliente'=>$data['cliente']??'CLIENTE MAYORISTA','telefono'=>$data['telefono']??'','nit'=>$data['nit']??'','formapago'=>$data['formapago']??'Efectivo','fecha'=>date('Y-m-d H:i:s'),'vendedor'=>intval($data['vendedor']??1),'idusr'=>intval($data['idusr']??1),'con_factura'=>0,'porcentaje_aplicado'=>0,'idcliente'=>$data['idcliente']??0,'pago'=>$data['pago']??$data['total'],'saldo'=>abs(($data['pago']??$data['total'])-$data['total']),'pagomixto'=>$data['pagomixto']??null,'comentario'=>$comment]);
         $nro_venta = $this->db->insert_id();
+
+        if (!empty($data['qr_alias'])) {
+            $this->db->where('alias', $data['qr_alias'])->update('bisa_qr_transacciones', [
+                'id_venta' => $idventa
+            ]);
+        }
+
         foreach ($data['cart'] as $item) {
             $inv = $this->db->where('id', intval($item['id']))->get('inventarios')->row();
             if (!$inv) { continue; }
