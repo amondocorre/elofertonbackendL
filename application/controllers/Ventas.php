@@ -733,8 +733,9 @@ class Ventas extends CI_Controller {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'La proforma está vencida y no puede ser recuperada']));
         }
         
-        if (($proforma->estado === 'Vendido' || $proforma->estado === 'Pagado') && $mode !== 'view') {
-            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'La proforma ya ha sido procesada o cobrada.']));
+        // Solo bloquear si ya fue Vendido. Permitir recuperar proformas 'Pagado' (por QR web) para convertirlas a venta y descontar stock.
+        if ($proforma->estado === 'Vendido' && $mode !== 'view') {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'La proforma ya ha sido procesada y convertida a venta.']));
         }
 
         $vendedorRow = $this->db->select('nombre')->where('id', $proforma->vendedor)->get('vendedores')->row();
