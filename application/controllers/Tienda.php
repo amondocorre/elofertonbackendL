@@ -31,9 +31,8 @@ class Tienda extends CI_Controller {
         $is_vendedor = false;
         if (!empty($vendedor_id)) {
             $this->db->where('id', $vendedor_id);
-            $this->db->where('estado', 'activo');
             $vendedor = $this->db->get('vendedores')->row();
-            if ($vendedor) {
+            if ($vendedor && strtolower(trim($vendedor->estado)) === 'activo') {
                 // Obtener roles múltiples
                 $rolesQuery = $this->db->get_where('vendedores_roles', ['vendedor_id' => $vendedor->id])->result();
                 $roles_lower = array();
@@ -51,7 +50,6 @@ class Tienda extends CI_Controller {
                 }
             }
         }
-        log_message('error', "TIENDA API: vendedor_id=" . json_encode($vendedor_id) . " is_vendedor=" . ($is_vendedor ? 'true' : 'false'));
 
         // Obtener marcas únicas (antes de iniciar la consulta principal)
         $this->db->select('m.nombre as marca, m.logo');
@@ -124,13 +122,7 @@ class Tienda extends CI_Controller {
         echo json_encode([
             'status' => 'success',
             'data' => $productos,
-            'debug' => [
-                'vendedor_id' => $vendedor_id,
-                'is_vendedor' => $is_vendedor,
-                'roles_lower' => isset($roles_lower) ? $roles_lower : [],
-                'vendedor_found' => isset($vendedor) ? (bool)$vendedor : false,
-                'vendedor_estado' => isset($vendedor) ? $vendedor->estado : null
-            ]
+            'marcas' => $marcas
         ]);
     }
 
