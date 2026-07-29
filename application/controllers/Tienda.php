@@ -156,6 +156,32 @@ class Tienda extends CI_Controller {
     }
 
     /**
+     * Buscar clientes para el autocompletado en el checkout web
+     */
+    public function buscar_cliente() {
+        $search = $this->input->get('q');
+        if (empty($search) || strlen(trim($search)) < 2) {
+            return $this->output->set_content_type('application/json')->set_output(json_encode([]));
+        }
+
+        $search_escaped = $this->db->escape_like_str(trim($search));
+        $this->db->select('id, nombre, nit, telefono, tipo_cliente, direccion');
+        $this->db->group_start();
+        $this->db->like('nombre', $search_escaped);
+        $this->db->or_like('nit', $search_escaped);
+        $this->db->or_like('telefono', $search_escaped);
+        $this->db->group_end();
+        $this->db->where('estado', 'activo');
+        $this->db->limit(5);
+        
+        $clientes = $this->db->get('clientes')->result_array();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $clientes]));
+    }
+
+    /**
      * Procesa el checkout de la web
      * POST /tienda/checkout
      */
