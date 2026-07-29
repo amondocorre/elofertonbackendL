@@ -82,11 +82,12 @@ class Tienda extends CI_Controller {
             MAX(p.precioventa) AS precioventa,
             MAX(p.nuevoprecio) AS preciomayor,
             COALESCE(MAX(inventarios.deposito), 1) AS sucursal,
+            COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
             NULLIF(MAX(p.imagen), \'\') AS imagen
         ';
         
         if ($is_vendedor) {
-            $select_fields .= ', COALESCE(SUM(inventarios.cantidad), 0) AS cantidad, COALESCE(MAX(p.comision), 0) AS comision';
+            $select_fields .= ', COALESCE(MAX(p.comision), 0) AS comision';
             $select_fields .= ', MAX((SELECT COUNT(*) FROM vendedor_favoritos WHERE id_producto = COALESCE(inventarios.id, p.id) AND id_vendedor = ' . (int)$vendedor_id . ')) as is_favorito';
         }
 
@@ -115,6 +116,8 @@ class Tienda extends CI_Controller {
 
         $this->db->group_by('p.idprod');
 
+        $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC');
+        $this->db->order_by('MAX(p.descripcion)', 'ASC');
 
         $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
         $productos = $this->db->get()->result();
