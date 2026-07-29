@@ -32,9 +32,9 @@ class Inventario extends MY_Controller {
             MAX(inventarios.unidad) AS unidad,
             MAX(inventarios.proveedor) AS proveedor,
             COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
-            MAX(inventarios.precioventa) AS precioventa,
-            MAX(inventarios.preciolocal) AS preciolocal,
-            MAX(inventarios.comision) AS comision,
+            MAX(p.precioventa) AS precioventa,
+            MAX(p.preciolocal) AS preciolocal,
+            MAX(p.comision) AS comision,
             MAX(inventarios.deposito) AS deposito,
             MAX(depositos.nombre) as deposito_nombre,
             MAX(NULLIF(p.imagen, \'\')) AS imagenes

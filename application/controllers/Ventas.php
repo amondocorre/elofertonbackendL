@@ -57,7 +57,7 @@ class Ventas extends CI_Controller {
             MAX(p.unidad) AS unidad,
             ' . $precioSelect . ' AS precioventa,
             COALESCE(SUM(i.cantidad), 0) AS cantidad,
-            COALESCE(MAX(i.comision), MAX(p.comision), 0) AS comision,
+            COALESCE(MAX(p.comision), 0) AS comision,
             \'' . intval($dep) . '\' AS deposito,
             MAX(NULLIF(p.imagen, \'\')) AS imagen
         ', FALSE);
@@ -210,7 +210,7 @@ class Ventas extends CI_Controller {
             
             $precioListaBase = floatval($esMayorista && $precioBaseMayorista > 0 ? $precioBaseMayorista : $precioBaseMinorista);
             $precioLista = ceil($precioListaBase * $impuestoFactor);
-            $comisionBase = ($inv && $inv->comision > 0) ? $inv->comision : $prodMaster->comision;
+            $comisionBase = $prodMaster->comision;
             $comision = floatval($comisionBase) * $impuestoFactor;
             $precioVenta = floatval($item['precioventa']);
 

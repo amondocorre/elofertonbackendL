@@ -24,6 +24,9 @@ class Configuracion extends CI_Controller {
         if (!$this->db->field_exists('metodo_qrbcp', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN metodo_qrbcp INT DEFAULT 1");
         }
+        if (!$this->db->field_exists('pos_metodo_qrbcp', 'configapp')) {
+            $this->db->query("ALTER TABLE configapp ADD COLUMN pos_metodo_qrbcp INT DEFAULT 1");
+        }
         $config_db = $this->db->get('configapp')->row_array();
         echo json_encode(['status' => 'success', 'data' => $config_db]);
     }
@@ -44,7 +47,7 @@ class Configuracion extends CI_Controller {
         ];
 
         // POS payment data
-        $pos_fields = ['pos_metodo_efectivo', 'pos_metodo_tarjeta', 'pos_metodo_transferencia', 'pos_metodo_qrbisa', 'pos_metodo_mixto'];
+        $pos_fields = ['pos_metodo_efectivo', 'pos_metodo_tarjeta', 'pos_metodo_transferencia', 'pos_metodo_qrbisa', 'pos_metodo_qrbcp', 'pos_metodo_mixto'];
         foreach ($pos_fields as $field) {
             if (isset($input_data[$field])) {
                 $data[$field] = (int)$input_data[$field];
