@@ -116,8 +116,8 @@ class Tienda extends CI_Controller {
 
         $this->db->group_by('p.idprod');
 
-        $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC');
-        $this->db->order_by('MAX(p.descripcion)', 'ASC');
+        $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC', FALSE);
+        $this->db->order_by('MAX(p.descripcion)', 'ASC', FALSE);
 
         $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
         $productos = $this->db->get()->result();
