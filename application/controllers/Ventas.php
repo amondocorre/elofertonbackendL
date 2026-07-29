@@ -43,9 +43,8 @@ class Ventas extends CI_Controller {
         $depositoObj = $this->db->select('tipo_almacen')->where('id', intval($dep))->get('depositos')->row();
         $esMayorista = ($depositoObj && $depositoObj->tipo_almacen === 'Deposito_Central');
         
-        $precioSelect = $esMayorista 
-            ? 'COALESCE(NULLIF(MAX(p.nuevoprecio), 0), MAX(p.precioventa))' 
-            : 'MAX(p.precioventa)';
+        // Siempre utilizar precioventa de la tabla productos
+        $precioSelect = 'MAX(p.precioventa)';
   
         // Seleccionar datos de productos con su stock consolidado para el depósito actual (vía LEFT JOIN)
         $this->db->select('
@@ -205,10 +204,7 @@ class Ventas extends CI_Controller {
             $depositoObj = $this->db->select('tipo_almacen')->where('id', intval($inv->deposito))->get('depositos')->row();
             $esMayorista = ($depositoObj && $depositoObj->tipo_almacen === 'Deposito_Central');
             
-            $precioBaseMayorista = ($prodMaster->nuevoprecio > 0) ? $prodMaster->nuevoprecio : 0;
-            $precioBaseMinorista = $prodMaster->precioventa;
-            
-            $precioListaBase = floatval($esMayorista && $precioBaseMayorista > 0 ? $precioBaseMayorista : $precioBaseMinorista);
+            $precioListaBase = floatval($prodMaster->precioventa);
             $precioLista = ceil($precioListaBase * $impuestoFactor);
             $comisionBase = $prodMaster->comision;
             $comision = floatval($comisionBase) * $impuestoFactor;
@@ -796,18 +792,22 @@ class Ventas extends CI_Controller {
 
         // Enriquecer detalles con información del inventario (código, precio original y stock disponible)
         foreach ($detalles as &$det) {
-            $prod = $this->db->select('idprod, precioventa, cantidad')->where('id', $det->idprod)->get('inventarios')->row();
+            $prod = $this->db->select('idprod, cantidad')->where('id', $det->idprod)->get('inventarios')->row();
+            
             if ($prod) {
                 $det->codigo = $prod->idprod;
+                $prodData = $this->db->select('precioventa')->where('idprod', $prod->idprod)->get('productos')->row();
             } else {
                 $prod2 = $this->db->select('idprod')->where('id', $det->idprod)->get('productos')->row();
                 if ($prod2) {
                     $det->codigo = $prod2->idprod;
+                    $prodData = $this->db->select('precioventa')->where('idprod', $prod2->idprod)->get('productos')->row();
                 } else {
                     $det->codigo = $det->idprod;
+                    $prodData = null;
                 }
             }
-            $det->precioventaOriginal = $prod ? $prod->precioventa : $det->precioventa;
+            $det->precioventaOriginal = $prodData ? $prodData->precioventa : $det->precioventa;
             $det->stockMaximo = $prod ? $prod->cantidad : $det->cuantos;
         }
 
