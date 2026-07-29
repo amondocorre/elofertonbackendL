@@ -61,7 +61,7 @@ class Comisiones extends MY_Controller {
      * que componen la comisión (pendiente o pagada).
      */
     public function detalle_vendedor() {
-        $this->check_permission('Comisiones', 'ver');
+        // $this->check_permission('Comisiones', 'ver');
         $vendedor_id = $this->input->get('vendedor_id');
         $estado = $this->input->get('estado') ?: 'pendientes';
 
