@@ -56,7 +56,7 @@ class Inventario extends MY_Controller {
             $this->db->group_end();
         }
 
-        $this->db->group_by('p.idprod, p.descripcion, p.categoria, p.marca, p.imagen');
+        $this->db->group_by('p.idprod, p.descripcion, p.categoria, p.marca, p.imagen, inventarios.deposito, depositos.nombre');
 
         if ($stockFilter === 'disponible') {
             $this->db->having('COALESCE(SUM(inventarios.cantidad), 0) >', 0);
