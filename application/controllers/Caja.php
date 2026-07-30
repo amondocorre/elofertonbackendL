@@ -297,7 +297,7 @@ class Caja extends CI_Controller {
         $this->db->join('depositos d', 'sc.sucursal_id = d.id', 'left');
 
         if (!empty($sucursal)) {
-            $this->db->where('v.ciudad', $sucursal);
+            $this->db->where('sc.sucursal_id', $sucursal);
         }
         if (!empty($inicio)) {
             $this->db->where('sc.fecha_apertura >=', $inicio . ' 00:00:00');
@@ -365,8 +365,9 @@ class Caja extends CI_Controller {
                     if (is_array($mix)) {
                         $cashPaid = floatval($mix['efectivo'] ?? 0);
                     } else {
-                        if (preg_match('/EFECTIVO:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $cashPaid = floatval($matches[1]);
+                        if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
+                            $cleanValue = str_replace(',', '', $matches[1]);
+                            $cashPaid = floatval($cleanValue);
                         }
                     }
                 } else if (strtolower($s->formapago) === 'efectivo') {
