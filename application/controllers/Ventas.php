@@ -143,18 +143,16 @@ class Ventas extends CI_Controller {
 
         // Validar precios unitarios según comisión de cada producto
         foreach ($data['cart'] as &$item) {
-            // 1. Intentar buscar lote en inventarios por clave primaria
-            $inv = $this->db->where('id', intval($item['id']))->get('inventarios')->row();
-            
-            // 2. Si no se encuentra, buscar por SKU/código y depósito actual
-            if (!$inv && !empty($item['idprod'])) {
+            $inv = null;
+            // Buscar lote en el depósito actual por IDPROD (código SKU)
+            if (!empty($item['idprod'])) {
                 $inv = $this->db->where('idprod', $item['idprod'])
                                 ->where('deposito', $depositoId)
                                 ->order_by('precioventa', 'DESC')
                                 ->get('inventarios')
                                 ->row();
                 if ($inv) {
-                    $item['id'] = $inv->id; // Actualizar el ID del item para el resto del procesamiento
+                    $item['id'] = $inv->id; // Actualizar el ID del item para el resto del procesamiento con el del lote encontrado
                 }
             }
 
@@ -339,7 +337,8 @@ class Ventas extends CI_Controller {
                 // B. Insertar detalle de la venta para este lote
                 $detalleData = [
                     'idventa' => $idventa,
-                    'idprod' => $lote->id, // Referencia al lote de donde salió
+                    'idprod' => $lote->idprod, // Código del producto, NO id del lote
+                    'inventario_id' => $lote->id, // ID específico del lote descontado
                     'preciolocal' => $lote->preciolocal, // Costo de compra del lote
                     'precioventa' => $item['precioventa'],
                     'preciofinal' => $item['precioventa'],
@@ -378,7 +377,8 @@ class Ventas extends CI_Controller {
 
                 $detalleData = [
                     'idventa' => $idventa,
-                    'idprod' => $inv->id,
+                    'idprod' => $inv->idprod,
+                    'inventario_id' => $inv->id, // ID del lote
                     'preciolocal' => $inv->preciolocal,
                     'precioventa' => $item['precioventa'],
                     'preciofinal' => $item['precioventa'],
@@ -606,9 +606,11 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, d.nombre AS sucursal, u.nombre AS vendedor_nombre, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, d.nombre AS sucursal, u.nombre AS vendedor_nombre, p.idprod AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
+        // Para compatibilidad con datos corruptos y datos nuevos, intentamos unir productos usando dv.idprod
+        $this->db->join('productos p', 'dv.idprod = p.idprod', 'left');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('vendedores u', 'v.vendedor = u.id', 'left');
 
