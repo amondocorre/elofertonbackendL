@@ -294,7 +294,7 @@ class Caja extends CI_Controller {
         $this->db->select('sc.*, v.nombre as cajero_nombre, d.nombre as sucursal_nombre, d.id as sucursal_id');
         $this->db->from('sesiones_caja sc');
         $this->db->join('vendedores v', 'sc.usuario_id = v.id', 'inner');
-        $this->db->join('depositos d', 'v.ciudad = d.id', 'left');
+        $this->db->join('depositos d', 'sc.sucursal_id = d.id', 'left');
 
         if (!empty($sucursal)) {
             $this->db->where('v.ciudad', $sucursal);
@@ -329,12 +329,12 @@ class Caja extends CI_Controller {
                                 ->row()->monto ?? 0;
 
             // Calcular Ventas
-            $sales = $this->db->select('v.total, v.formapago, v.pago, v.pagomixto, v.comentario, COALESCE(vt.precio_transporte, 0) AS precio_transporte')
+            $sales = $this->db->select('v.total, v.formapago, v.pago, v.pagomixto, v.comentario, v.fecha AS venta_fecha, COALESCE(vt.precio_transporte, 0) AS precio_transporte')
                               ->from('ventas v')
                               ->join('ventatransporte vt', 'v.idventa = vt.idventa', 'left')
                               ->where('v.idusr', $c->usuario_id)
-                              ->where('v.fecha >=', $c->fecha_apertura)
-                              ->where('v.fecha <=', $fecha_fin)
+                              ->where('DATE(v.fecha) >=', date('Y-m-d', strtotime($c->fecha_apertura)))
+                              ->where('DATE(v.fecha) <=', date('Y-m-d', strtotime($fecha_fin)))
                               ->get()
                               ->result();
 
@@ -343,6 +343,17 @@ class Caja extends CI_Controller {
                 // Ignorar ventas cobradas desde la web
                 if (!empty($s->comentario) && stripos($s->comentario, '[WEB_PAGADO]') !== false) {
                     continue;
+                }
+
+                // Si la base de datos almacena v.fecha como DATETIME, filtramos por hora exacta.
+                // Si es solo DATE (longitud 10), asumimos que pertenece al turno si coincide el día.
+                if (strlen($s->venta_fecha) > 10) {
+                    $venta_ts = strtotime($s->venta_fecha);
+                    $apertura_ts = strtotime($c->fecha_apertura);
+                    $cierre_ts = strtotime($fecha_fin);
+                    if ($venta_ts < $apertura_ts || $venta_ts > $cierre_ts) {
+                        continue;
+                    }
                 }
 
                 $cashPaid = 0.0;
