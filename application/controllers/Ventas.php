@@ -298,6 +298,14 @@ class Ventas extends CI_Controller {
             $prodMaster = $this->db->where('idprod', $idprod)->get('productos')->row();
             $prodIdMaster = $prodMaster ? $prodMaster->id : 0;
 
+            // Determinar la comisión real unitaria descontando la rebaja al cliente
+            $precioEsperado = $prodMaster ? floatval($prodMaster->precioventa) : 0;
+            $precioVentaReal = floatval($item['precioventa']);
+            $comisionBase = $prodMaster ? floatval($prodMaster->comision) : 0;
+            $rebaja = max(0, $precioEsperado - $precioVentaReal);
+            $comisionUnitariaReal = max(0, $comisionBase - $rebaja);
+
+
             // Restar stock de la tabla de conciliación consolidada inventario_stock
             if ($prodIdMaster > 0) {
                 $this->db->where('producto_id', $prodIdMaster);
@@ -336,7 +344,7 @@ class Ventas extends CI_Controller {
                     'precioventa' => $item['precioventa'],
                     'preciofinal' => $item['precioventa'],
                     'cuantos' => $descuento,
-                    'comision' => floatval($prodMaster->comision) * $descuento,
+                    'comision' => $comisionUnitariaReal * $descuento,
                     'descripcion' => $item['descripcion'] ?? $lote->descripcion,
                     'vendedor' => $data['vendedor'] ?? 1,
                     'pagocomision' => null,
@@ -375,7 +383,7 @@ class Ventas extends CI_Controller {
                     'precioventa' => $item['precioventa'],
                     'preciofinal' => $item['precioventa'],
                     'cuantos' => $cantPendiente,
-                    'comision' => floatval($prodMaster->comision) * $cantPendiente,
+                    'comision' => $comisionUnitariaReal * $cantPendiente,
                     'descripcion' => $item['descripcion'] ?? $inv->descripcion,
                     'vendedor' => $data['vendedor'] ?? 1,
                     'pagocomision' => null,
