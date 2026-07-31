@@ -664,11 +664,11 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $cajero = $this->input->get('cajero');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, d.nombre AS sucursal, u.nombre AS vendedor_nombre, usr.name AS cajero_nombre, v.total, v.pago, v.saldo, v.formapago, v.pagomixto');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, d.nombre AS sucursal, u.nombre AS vendedor_nombre, usr.nombre AS cajero_nombre, v.total, v.pago, v.saldo, v.formapago, v.pagomixto');
         $this->db->from('ventas v');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('vendedores u', 'v.vendedor = u.id', 'left');
-        $this->db->join('users usr', 'v.idusr = usr.id', 'left');
+        $this->db->join('vendedores usr', 'v.idusr = usr.id', 'left');
 
         if (!empty($fechaInicio)) {
             $this->db->where('DATE(v.fecha) >=', $fechaInicio);

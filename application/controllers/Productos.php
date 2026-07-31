@@ -226,15 +226,17 @@ class Productos extends MY_Controller {
             $this->db->where('id', $id);
             $this->db->update('productos', $prodData);
             $message = 'Producto actualizado con éxito.';
+            $savedId = $id;
         } else {
             $this->db->insert('productos', $prodData);
             $message = 'Producto registrado con éxito.';
+            $savedId = $this->db->insert_id();
         }
 
         return $this->output
             ->set_content_type('application/json')
             ->set_status_header(200)
-            ->set_output(json_encode(['message' => $message]));
+            ->set_output(json_encode(['message' => $message, 'id' => $savedId]));
     }
 
     /**

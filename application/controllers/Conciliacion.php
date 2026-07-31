@@ -58,6 +58,56 @@ class Conciliacion extends MY_Controller
     }
 
     /**
+     * Paso A (Edición): Edita un pedido en estado 'Pendiente'.
+     */
+    public function editar_pedido()
+    {
+        $this->check_permission('Conciliación', 'editar');
+        $data = json_decode(file_get_contents('php://input'), true);
+
+        if (empty($data['pedido_id']) || empty($data['proveedor_id']) || empty($data['almacen_id']) || empty($data['detalles'])) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Datos insuficientes para editar el pedido.']));
+        }
+
+        $pedidoId = intval($data['pedido_id']);
+
+        // Verificar el estado del pedido actual
+        $pedidoObj = $this->Conciliacion_model->get_pedido_by_id($pedidoId);
+        if (!$pedidoObj) {
+            return $this->output
+                ->set_status_header(404)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'El pedido especificado no existe.']));
+        }
+
+        if ($pedidoObj['pedido']['estado'] !== 'Pendiente') {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Sólo se pueden editar pedidos que estén en estado Pendiente.']));
+        }
+
+        $success = $this->Conciliacion_model->editar_pedido($pedidoId, $data, $data['detalles']);
+
+        if (!$success) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Error al guardar los cambios del pedido.']));
+        }
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode([
+                'message' => 'Pedido actualizado con éxito.'
+            ]));
+    }
+
+    /**
      * Paso B: Recepción física de mercancía (Almacenero).
      * Aplica la regla crítica de validación de permisos de almacén (Error 403 si falla).
      */

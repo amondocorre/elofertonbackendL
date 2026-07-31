@@ -155,6 +155,46 @@ class Conciliacion_model extends CI_Model
         return $pedidoId;
     }
 
+    /**
+     * Paso A (Edición): Edita un pedido existente en estado 'Pendiente'.
+     * 
+     * @param int $pedidoId ID del pedido a editar
+     * @param array $pedidoData Datos de la cabecera del pedido
+     * @param array $detallesData Array con los nuevos detalles de productos
+     * @return bool TRUE si se guardó con éxito, FALSE en caso contrario
+     */
+    public function editar_pedido($pedidoId, $pedidoData, $detallesData)
+    {
+        $this->db->trans_start();
+
+        // 1. Actualizar la cabecera del pedido
+        $this->db->where('id', intval($pedidoId));
+        $this->db->update('pedidos', [
+            'proveedor_id'  => intval($pedidoData['proveedor_id']),
+            'almacen_id'    => intval($pedidoData['almacen_id']),
+        ]);
+
+        // 2. Eliminar detalles anteriores del pedido
+        $this->db->where('pedido_id', intval($pedidoId));
+        $this->db->delete('pedido_detalles');
+
+        // 3. Insertar los nuevos detalles
+        foreach ($detallesData as $detalle) {
+            $this->db->insert('pedido_detalles', [
+                'pedido_id'          => intval($pedidoId),
+                'producto_id'        => intval($detalle['producto_id']),
+                'cantidad_pedida'    => intval($detalle['cantidad_pedida']),
+                'cantidad_recibida'  => 0,
+                'cantidad_facturada' => 0,
+                'precio_unitario'    => floatval($detalle['precio_unitario'])
+            ]);
+        }
+
+        $this->db->trans_complete();
+
+        return $this->db->trans_status() !== false;
+    }
+
     public function recibir_pedido($pedidoId, $recepcionItems, $almacenId, $observacionPedido = null)
     {
         $this->db->trans_start();
