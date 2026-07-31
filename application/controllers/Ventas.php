@@ -606,7 +606,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, d.nombre AS sucursal, u.nombre AS vendedor_nombre, p.idprod AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, p.idprod AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
         // Para compatibilidad con datos corruptos y datos nuevos, intentamos unir productos usando dv.idprod

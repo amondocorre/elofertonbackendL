@@ -236,6 +236,8 @@ class Conciliacion extends MY_Controller
         $warehouseId = intval($pedidoObj['pedido']['almacen_id'] ?? 0);
         $invoiceDate = $data['fecha_factura'];
 
+        // Se deshabilita la validación contra el último cierre de caja/inventario para permitir registrar compras en cualquier fecha.
+        /*
         // Validar que la fecha de la factura no sea anterior o igual a la fecha de bloqueo (último cierre)
         if ($warehouseId > 0) {
             $this->db->where('deposito', $warehouseId);
@@ -253,6 +255,7 @@ class Conciliacion extends MY_Controller
                 }
             }
         }
+        */
 
         // Validar que la fecha de vencimiento sea válida si es a crédito
         if ($data['tipo_pago'] === 'A Crédito') {
