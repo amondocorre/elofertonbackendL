@@ -606,7 +606,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, p.idprod AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, p.idprod AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
         // Para compatibilidad con datos corruptos y datos nuevos, intentamos unir productos usando dv.idprod
@@ -664,7 +664,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $cajero = $this->input->get('cajero');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, d.nombre AS sucursal, u.nombre AS vendedor_nombre, usr.nombre AS cajero_nombre, v.total, v.pago, v.saldo, v.formapago, v.pagomixto');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, d.nombre AS sucursal, u.nombre AS vendedor_nombre, usr.nombre AS cajero_nombre, v.total, v.pago, v.saldo, v.formapago, v.pagomixto, v.estado, v.motivo_anulacion, v.usuario_anulacion');
         $this->db->from('ventas v');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('vendedores u', 'v.vendedor = u.id', 'left');
@@ -709,6 +709,120 @@ class Ventas extends CI_Controller {
             ->set_content_type('application/json')
             ->set_output(json_encode($reporte));
     }
+
+    /**
+     * Anula una venta, revierte el stock del inventario y registra la operacion en Kardex.
+     */
+    public function anular_venta() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        $idventa = $data['idventa'] ?? null;
+        $motivo = $data['motivo'] ?? '';
+        $usuario = $data['usuario'] ?? '';
+
+        if (empty($idventa)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'ID de venta requerido']));
+        }
+
+        if (empty($motivo)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'El motivo de la anulación es requerido']));
+        }
+
+        if (empty($usuario)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'El usuario que anula es requerido']));
+        }
+
+        // Obtener la venta
+        $venta = $this->db->where('idventa', $idventa)->get('ventas')->row();
+        if (!$venta) {
+            return $this->output
+                ->set_status_header(404)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Venta no encontrada']));
+        }
+
+        if ($venta->estado === 'ANULADO') {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'La venta ya se encuentra anulada']));
+        }
+
+        $this->db->trans_start();
+
+        // 1. Obtener los detalles de la venta
+        $detalles = $this->db->where('idventa', $idventa)->get('detalleventas')->result();
+        $depositoId = intval($venta->idneg);
+        $nro_venta = $venta->id;
+
+        foreach ($detalles as $det) {
+            $idprod = $det->idprod;
+            $cantA_Revertir = floatval($det->cuantos);
+            $loteId = intval($det->inventario_id);
+
+            // Obtener producto master para inventario_stock
+            $prodMaster = $this->db->where('idprod', $idprod)->get('productos')->row();
+            $prodIdMaster = $prodMaster ? $prodMaster->id : 0;
+
+            // Restablecer stock consolidado en inventario_stock
+            if ($prodIdMaster > 0) {
+                $this->db->where('producto_id', $prodIdMaster);
+                $this->db->where('almacen_id', $depositoId);
+                $this->db->set('stock', 'stock + ' . $cantA_Revertir, false);
+                $this->db->update('inventario_stock');
+            }
+
+            // Aumentar la cantidad en el lote original de inventarios
+            if ($loteId > 0) {
+                $this->db->where('id', $loteId);
+                $this->db->set('cantidad', 'cantidad + ' . $cantA_Revertir, false);
+                $this->db->update('inventarios');
+            }
+
+            // Registrar en Kardex la anulación como un INGRESO
+            if ($prodIdMaster > 0) {
+                $this->db->insert('kardex', [
+                    'producto_id' => $prodIdMaster,
+                    'almacen_id' => $depositoId,
+                    'lote_id' => $loteId > 0 ? $loteId : null,
+                    'cantidad' => $cantA_Revertir,
+                    'concepto' => 'ANULACION_VENTA',
+                    'tipo_movimiento' => 'INGRESO',
+                    'referencia_id' => $nro_venta
+                ]);
+            }
+        }
+
+        // 2. Marcar la venta como anulada
+        $this->db->where('idventa', $idventa)->update('ventas', [
+            'estado' => 'ANULADO',
+            'motivo_anulacion' => $motivo,
+            'usuario_anulacion' => $usuario
+        ]);
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Error al anular la venta en base de datos']));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['message' => 'Venta anulada exitosamente y stock retornado']));
+    }
+
 
     /**
      * Busca una proforma por su ID.
