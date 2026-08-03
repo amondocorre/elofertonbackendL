@@ -223,6 +223,34 @@ class Productos extends MY_Controller {
         ];
 
         if ($id) {
+            $previous = $this->db->where('id', $id)->get('productos')->row();
+            if ($previous) {
+                $userId = $this->input->get_request_header('X-User-Id', TRUE);
+                if (empty($userId)) {
+                    $userId = isset($_SERVER['HTTP_X_USER_ID']) ? $_SERVER['HTTP_X_USER_ID'] : (isset($_SERVER['HTTP_X_User_Id']) ? $_SERVER['HTTP_X_User_Id'] : 0);
+                }
+                $userId = intval($userId);
+
+                $prices_to_check = [
+                    'compra' => ['old' => floatval($previous->preciolocal), 'new' => floatval($preciolocal)],
+                    'venta' => ['old' => floatval($previous->precioventa), 'new' => floatval($precioventa)],
+                    'mayor' => ['old' => $previous->nuevoprecio !== null ? floatval($previous->nuevoprecio) : 0.0, 'new' => $nuevoprecio !== null ? floatval($nuevoprecio) : 0.0]
+                ];
+
+                foreach ($prices_to_check as $type => $val) {
+                    if (abs($val['old'] - $val['new']) > 0.00001) {
+                        $this->db->insert('historial_precios', [
+                            'producto_id' => $id,
+                            'idprod' => $idprod,
+                            'tipo_precio' => $type,
+                            'precio_anterior' => $val['old'],
+                            'precio_nuevo' => $val['new'],
+                            'usuario_id' => $userId
+                        ]);
+                    }
+                }
+            }
+
             $this->db->where('id', $id);
             $this->db->update('productos', $prodData);
             $message = 'Producto actualizado con éxito.';
@@ -343,6 +371,36 @@ class Productos extends MY_Controller {
             // Comprobar si existe
             $existing = $this->db->where('idprod', $idprod)->get('productos')->row();
             if ($existing) {
+                // COMPARACIÓN DE PRECIOS
+                $preciolocal_new = isset($p['preciolocal']) ? floatval($p['preciolocal']) : 0.0;
+                $precioventa_new = isset($p['precioventa']) ? floatval($p['precioventa']) : 0.0;
+                $nuevoprecio_new = isset($p['nuevoprecio']) && $p['nuevoprecio'] !== '' ? floatval($p['nuevoprecio']) : null;
+
+                $prices_to_check = [
+                    'compra' => ['old' => floatval($existing->preciolocal), 'new' => $preciolocal_new],
+                    'venta' => ['old' => floatval($existing->precioventa), 'new' => $precioventa_new],
+                    'mayor' => ['old' => $existing->nuevoprecio !== null ? floatval($existing->nuevoprecio) : 0.0, 'new' => $nuevoprecio_new !== null ? floatval($nuevoprecio_new) : 0.0]
+                ];
+
+                $userId = $this->input->get_request_header('X-User-Id', TRUE);
+                if (empty($userId)) {
+                    $userId = isset($_SERVER['HTTP_X_USER_ID']) ? $_SERVER['HTTP_X_USER_ID'] : (isset($_SERVER['HTTP_X_User_Id']) ? $_SERVER['HTTP_X_User_Id'] : 0);
+                }
+                $userId = intval($userId);
+
+                foreach ($prices_to_check as $type => $val) {
+                    if (abs($val['old'] - $val['new']) > 0.00001) {
+                        $this->db->insert('historial_precios', [
+                            'producto_id' => $existing->id,
+                            'idprod' => $idprod,
+                            'tipo_precio' => $type,
+                            'precio_anterior' => $val['old'],
+                            'precio_nuevo' => $val['new'],
+                            'usuario_id' => $userId
+                        ]);
+                    }
+                }
+
                 $this->db->where('id', $existing->id);
                 $this->db->update('productos', $prodData);
                 $actualizados++;
@@ -428,5 +486,31 @@ class Productos extends MY_Controller {
             ->set_content_type('application/json')
             ->set_status_header(200)
             ->set_output(json_encode(['message' => 'Producto reactivado con éxito.']));
+    }
+
+    /**
+     * Obtiene el historial de cambios de precios para un producto.
+     */
+    public function historial_precios($idprod = null) {
+        $this->check_permission('Productos', 'ver');
+        if (empty($idprod)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'idprod es requerido']));
+        }
+
+        $this->db->select('hp.*, v.nombre as usuario_nombre');
+        $this->db->from('historial_precios hp');
+        $this->db->join('vendedores v', 'hp.usuario_id = v.id', 'left');
+        $this->db->where('hp.idprod', $idprod);
+        $this->db->order_by('hp.fecha_hora', 'DESC');
+        
+        $historial = $this->db->get()->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(200)
+            ->set_output(json_encode($historial));
     }
 }

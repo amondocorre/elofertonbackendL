@@ -1789,9 +1789,18 @@ class Ventas extends CI_Controller {
      */
     public function dashboard_stats() {
         $sucursal_activa = $this->input->get_request_header('X-Active-Branch', TRUE);
+        if (empty($sucursal_activa)) {
+            $sucursal_activa = $this->input->get('active_branch') ?? $this->input->get('sucursal');
+        }
+        if (empty($sucursal_activa) && isset($_SERVER['HTTP_X_ACTIVE_BRANCH'])) {
+            $sucursal_activa = $_SERVER['HTTP_X_ACTIVE_BRANCH'];
+        }
+        if ($sucursal_activa === 'null' || $sucursal_activa === 'undefined' || $sucursal_activa === 'all' || empty($sucursal_activa)) {
+            $sucursal_activa = null;
+        }
         
         $today = date('Y-m-d');
-        $this->db->select_sum('total')->where('DATE(fecha)', $today);
+        $this->db->select_sum('total')->where('DATE(fecha)', $today)->where('estado !=', 'anulado');
         if (!empty($sucursal_activa)) {
             $this->db->where('idneg', $sucursal_activa);
         }
@@ -1812,7 +1821,7 @@ class Ventas extends CI_Controller {
 
         $month = date('m');
         $year = date('Y');
-        $this->db->select_sum('total')->where('MONTH(fecha)', $month)->where('YEAR(fecha)', $year);
+        $this->db->select_sum('total')->where('MONTH(fecha)', $month)->where('YEAR(fecha)', $year)->where('estado !=', 'anulado');
         if (!empty($sucursal_activa)) {
             $this->db->where('idneg', $sucursal_activa);
         }
