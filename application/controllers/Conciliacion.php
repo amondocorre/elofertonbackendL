@@ -171,7 +171,7 @@ class Conciliacion extends MY_Controller
      */
     public function subir_factura()
     {
-        $this->check_permission('Conciliación', 'eliminar');
+        $this->check_permission('Conciliación', 'crear');
 
         if (isset($_FILES['factura_file']) && !empty($_FILES['factura_file']['name'])) {
             $upload_path = FCPATH . 'uploads/facturas/';
@@ -214,7 +214,7 @@ class Conciliacion extends MY_Controller
      */
     public function facturar_pedido()
     {
-        $this->check_permission('Conciliación', 'eliminar');
+        $this->check_permission('Conciliación', 'crear');
         $data = json_decode(file_get_contents('php://input'), true);
 
         if (empty($data['pedido_id']) || empty($data['nro_comprobante']) || empty($data['tipo_pago']) || !isset($data['monto_total']) || empty($data['fecha_factura']) || empty($data['items'])) {

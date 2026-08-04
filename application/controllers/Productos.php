@@ -149,6 +149,7 @@ class Productos extends MY_Controller {
         $proveedor = isset($data['proveedor']) && $data['proveedor'] !== '' ? intval($data['proveedor']) : 1;
         $imagen = isset($data['imagen']) ? trim($data['imagen']) : null;
         $comision = isset($data['comision']) && $data['comision'] !== '' ? floatval($data['comision']) : null;
+        $observaciones = isset($data['observaciones']) && $data['observaciones'] !== '' ? trim($data['observaciones']) : null;
         if (empty($idprod) || empty($descripcion)) {
             return $this->output
                 ->set_content_type('application/json')
@@ -247,6 +248,7 @@ class Productos extends MY_Controller {
                             'precio_anterior' => $val['old'],
                             'precio_nuevo' => $val['new'],
                             'usuario_id' => $userId,
+                            'observaciones' => $observaciones,
                             'fecha_hora' => date('Y-m-d H:i:s')
                         ]);
                     }
@@ -496,19 +498,28 @@ class Productos extends MY_Controller {
     /**
      * Obtiene el historial de cambios de precios para un producto.
      */
-    public function historial_precios($idprod = null) {
+    public function historial_precios($id = null) {
         $this->check_permission('Productos', 'ver');
-        if (empty($idprod)) {
+        if (empty($id)) {
             return $this->output
                 ->set_status_header(400)
                 ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'idprod es requerido']));
+                ->set_output(json_encode(['error' => 'id es requerido']));
         }
 
         $this->db->select('hp.*, v.nombre as usuario_nombre');
         $this->db->from('historial_precios hp');
         $this->db->join('vendedores v', 'hp.usuario_id = v.id', 'left');
-        $this->db->where('hp.idprod', $idprod);
+        
+        if (is_numeric($id)) {
+            $this->db->group_start();
+            $this->db->where('hp.producto_id', intval($id));
+            $this->db->or_where('hp.idprod', $id);
+            $this->db->group_end();
+        } else {
+            $this->db->where('hp.idprod', $id);
+        }
+        
         $this->db->order_by('hp.fecha_hora', 'DESC');
         
         $historial = $this->db->get()->result();
