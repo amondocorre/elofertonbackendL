@@ -234,7 +234,8 @@ class Productos extends MY_Controller {
                 $prices_to_check = [
                     'compra' => ['old' => floatval($previous->preciolocal), 'new' => floatval($preciolocal)],
                     'venta' => ['old' => floatval($previous->precioventa), 'new' => floatval($precioventa)],
-                    'mayor' => ['old' => $previous->nuevoprecio !== null ? floatval($previous->nuevoprecio) : 0.0, 'new' => $nuevoprecio !== null ? floatval($nuevoprecio) : 0.0]
+                    'mayor' => ['old' => $previous->nuevoprecio !== null ? floatval($previous->nuevoprecio) : 0.0, 'new' => $nuevoprecio !== null ? floatval($nuevoprecio) : 0.0],
+                    'comision' => ['old' => $previous->comision !== null ? floatval($previous->comision) : 0.0, 'new' => $comision !== null ? floatval($comision) : 0.0]
                 ];
 
                 foreach ($prices_to_check as $type => $val) {
@@ -375,11 +376,13 @@ class Productos extends MY_Controller {
                 $preciolocal_new = isset($p['preciolocal']) ? floatval($p['preciolocal']) : 0.0;
                 $precioventa_new = isset($p['precioventa']) ? floatval($p['precioventa']) : 0.0;
                 $nuevoprecio_new = isset($p['nuevoprecio']) && $p['nuevoprecio'] !== '' ? floatval($p['nuevoprecio']) : null;
+                $comision_new = isset($p['comision']) && $p['comision'] !== '' ? floatval($p['comision']) : 0.0;
 
                 $prices_to_check = [
                     'compra' => ['old' => floatval($existing->preciolocal), 'new' => $preciolocal_new],
                     'venta' => ['old' => floatval($existing->precioventa), 'new' => $precioventa_new],
-                    'mayor' => ['old' => $existing->nuevoprecio !== null ? floatval($existing->nuevoprecio) : 0.0, 'new' => $nuevoprecio_new !== null ? floatval($nuevoprecio_new) : 0.0]
+                    'mayor' => ['old' => $existing->nuevoprecio !== null ? floatval($existing->nuevoprecio) : 0.0, 'new' => $nuevoprecio_new !== null ? floatval($nuevoprecio_new) : 0.0],
+                    'comision' => ['old' => $existing->comision !== null ? floatval($existing->comision) : 0.0, 'new' => $comision_new]
                 ];
 
                 $userId = $this->input->get_request_header('X-User-Id', TRUE);
