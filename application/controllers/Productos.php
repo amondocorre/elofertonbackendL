@@ -246,7 +246,8 @@ class Productos extends MY_Controller {
                             'tipo_precio' => $type,
                             'precio_anterior' => $val['old'],
                             'precio_nuevo' => $val['new'],
-                            'usuario_id' => $userId
+                            'usuario_id' => $userId,
+                            'fecha_hora' => date('Y-m-d H:i:s')
                         ]);
                     }
                 }
@@ -399,7 +400,8 @@ class Productos extends MY_Controller {
                             'tipo_precio' => $type,
                             'precio_anterior' => $val['old'],
                             'precio_nuevo' => $val['new'],
-                            'usuario_id' => $userId
+                            'usuario_id' => $userId,
+                            'fecha_hora' => date('Y-m-d H:i:s')
                         ]);
                     }
                 }

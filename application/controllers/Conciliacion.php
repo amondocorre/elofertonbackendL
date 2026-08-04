@@ -654,4 +654,45 @@ class Conciliacion extends MY_Controller
             ->set_content_type('application/json')
             ->set_output(json_encode(['message' => 'Traspaso de mercancía completado con éxito.']));
     }
+
+    /**
+     * Busca productos por una lista de códigos (idprod)
+     * POST /conciliacion/buscar_por_codigos
+     */
+    public function buscar_por_codigos()
+    {
+        $this->check_permission('Conciliación', 'crear');
+        $data = json_decode(file_get_contents('php://input'), true);
+        $codigos = isset($data['codigos']) ? $data['codigos'] : [];
+
+        if (empty($codigos)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'No se proporcionaron códigos.']));
+        }
+
+        // Sanitizar y limpiar códigos
+        $codigos_clean = array_map(function($c) {
+            return trim($c);
+        }, $codigos);
+        $codigos_clean = array_filter($codigos_clean);
+
+        if (empty($codigos_clean)) {
+            return $this->output
+                ->set_status_header(200)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([]));
+        }
+
+        $this->db->select('id, idprod, descripcion, preciolocal');
+        $this->db->from('productos');
+        $this->db->where_in('idprod', $codigos_clean);
+        $productos = $this->db->get()->result_array();
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode($productos));
+    }
 }
