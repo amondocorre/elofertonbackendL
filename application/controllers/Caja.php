@@ -254,6 +254,7 @@ class Caja extends CI_Controller {
         $detalle = $data['detalle'] ?? null;
         $monto = floatval($data['monto'] ?? 0);
         $informacion_adicional = $data['informacion_adicional'] ?? '';
+        $imagen = $data['imagen'] ?? null;
 
         if (!$caja_id || !$usuario_id || !$tipo || !$detalle || $monto <= 0) {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Datos inválidos para el movimiento']));
@@ -272,6 +273,7 @@ class Caja extends CI_Controller {
             'detalle' => $detalle,
             'monto' => $monto,
             'informacion_adicional' => $informacion_adicional,
+            'imagen' => $imagen,
             'fecha_registro' => date('Y-m-d H:i:s')
         ];
 
@@ -422,5 +424,67 @@ class Caja extends CI_Controller {
         }
 
         return $this->output->set_content_type('application/json')->set_output(json_encode($resultado));
+    }
+
+    /**
+     * Sube una imagen de respaldo para un ingreso o egreso de caja.
+     * POST /caja/subir_imagen_movimiento
+     */
+    public function subir_imagen_movimiento() {
+        if (isset($_FILES['imagen_file']) && !empty($_FILES['imagen_file']['name'])) {
+            $upload_path = FCPATH . 'uploads/caja/';
+            if (!is_dir($upload_path)) {
+                mkdir($upload_path, 0777, true);
+            }
+            
+            $config['upload_path'] = $upload_path;
+            $config['allowed_types'] = 'gif|jpg|jpeg|png|webp|pdf';
+            $config['max_size'] = 10240; // 10MB
+            $config['file_name'] = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $_FILES['imagen_file']['name']);
+
+            $this->load->library('upload', $config);
+
+            if ($this->upload->do_upload('imagen_file')) {
+                $uploadData = $this->upload->data();
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(200)
+                    ->set_output(json_encode([
+                        'message' => 'Archivo subido con éxito.',
+                        'file_name' => $uploadData['file_name']
+                    ]));
+            } else {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(400)
+                    ->set_output(json_encode([
+                        'error' => $this->upload->display_errors('', '')
+                    ]));
+            }
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(400)
+            ->set_output(json_encode(['error' => 'No se seleccionó ninguna imagen.']));
+    }
+
+    /**
+     * Obtiene todos los movimientos manuales asociados a una sesión de caja específica.
+     * GET /caja/detalles_movimientos/$caja_id
+     */
+    public function detalles_movimientos($caja_id = null) {
+        if (!$caja_id) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID de caja requerido']));
+        }
+
+        $this->db->select('mc.*, v.nombre as usuario_nombre');
+        $this->db->from('movimientos_caja mc');
+        $this->db->join('vendedores v', 'mc.usuario_id = v.id', 'left');
+        $this->db->where('mc.caja_id', intval($caja_id));
+        $this->db->order_by('mc.fecha_registro', 'DESC');
+        $movimientos = $this->db->get()->result_array();
+
+        return $this->output->set_content_type('application/json')->set_output(json_encode($movimientos));
     }
 }
