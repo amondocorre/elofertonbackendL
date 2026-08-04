@@ -234,4 +234,56 @@ class Transferencias extends MY_Controller {
             ->set_content_type('application/json')
             ->set_output(json_encode(['message' => 'Transferencia realizada y stock actualizado con éxito.', 'transferencia_id' => $transferencia_id]));
     }
+
+    /**
+     * Busca productos por una lista de códigos (idprod) y obtiene su stock en un almacén específico
+     * POST /transferencias/buscar_por_codigos_almacen
+     */
+    public function buscar_por_codigos_almacen()
+    {
+        $this->check_permission('Transferencias', 'crear');
+        $data = json_decode(file_get_contents('php://input'), true);
+        $codigos = isset($data['codigos']) ? $data['codigos'] : [];
+        $almacen_id = isset($data['almacen_id']) ? intval($data['almacen_id']) : null;
+
+        if (empty($codigos) || !$almacen_id) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Códigos y almacén de origen son requeridos.']));
+        }
+
+        // Sanitizar y limpiar códigos
+        $codigos_clean = array_map(function($c) {
+            return trim($c);
+        }, $codigos);
+        $codigos_clean = array_filter($codigos_clean);
+
+        if (empty($codigos_clean)) {
+            return $this->output
+                ->set_status_header(200)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([]));
+        }
+
+        // Obtener el master_id, idprod, descripcion, y el stock en el almacén_id
+        $this->db->select('
+            p.id as master_id,
+            p.idprod,
+            p.descripcion,
+            COALESCE(SUM(i.cantidad), 0) as stock_actual,
+            MAX(i.id) as inventario_id
+        ', FALSE);
+        $this->db->from('productos p');
+        $this->db->join('inventarios i', 'p.idprod = i.idprod AND i.deposito = ' . $almacen_id, 'left', FALSE);
+        $this->db->where_in('p.idprod', $codigos_clean);
+        $this->db->group_by('p.id, p.idprod, p.descripcion');
+        
+        $productos = $this->db->get()->result_array();
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode($productos));
+    }
 }
