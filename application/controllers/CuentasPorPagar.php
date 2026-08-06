@@ -18,6 +18,7 @@ class CuentasPorPagar extends MY_Controller {
         $this->db->join('pedidos p', 'cf.pedido_id = p.id', 'left');
         $this->db->join('proveedores pr', 'p.proveedor_id = pr.id', 'left');
         
+        $this->db->order_by('cf.fecha_factura', 'DESC');
         $query = $this->db->get();
         return $this->output
             ->set_status_header(200)
