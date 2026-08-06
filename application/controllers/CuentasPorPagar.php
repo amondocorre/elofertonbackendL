@@ -77,14 +77,14 @@ class CuentasPorPagar extends MY_Controller {
         $this->db->trans_start();
 
         $historialData = [
-            'cuenta_pagar_id' => $cuentaId,
+            'cuenta_id' => $cuentaId,
             'monto_pagado' => $montoPagado,
             'fecha_pago' => date('Y-m-d H:i:s'),
             'metodo_pago' => $metodo,
             'nota' => $nota,
             'usuario_id' => $userId
         ];
-        $this->db->insert('historial_pagos_cp', $historialData);
+        $this->db->insert('cuentas_por_pagar_pagos', $historialData);
         $pagoId = $this->db->insert_id();
 
         $nuevoSaldo = floatval($cuenta['saldo_pendiente']) - $montoPagado;
@@ -130,10 +130,10 @@ class CuentasPorPagar extends MY_Controller {
                 ->set_output(json_encode(['error' => 'El parámetro cuenta_id es obligatorio.']));
         }
 
-        $this->db->select('hp.*, u.username as usuario_nombre');
-        $this->db->from('historial_pagos_cp hp');
-        $this->db->join('usuarios u', 'hp.usuario_id = u.id', 'left');
-        $this->db->where('hp.cuenta_pagar_id', $cuentaId);
+        $this->db->select('hp.*, u.nombre as usuario_nombre');
+        $this->db->from('cuentas_por_pagar_pagos hp');
+        $this->db->join('vendedores u', 'hp.usuario_id = u.id', 'left');
+        $this->db->where('hp.cuenta_id', $cuentaId);
         $this->db->order_by('hp.fecha_pago', 'DESC');
         $query = $this->db->get();
 
@@ -208,14 +208,14 @@ class CuentasPorPagar extends MY_Controller {
             $montoAAbonar = min($saldo, $montoRestante);
 
             $historialData = [
-                'cuenta_pagar_id' => $cuenta['id'],
+                'cuenta_id' => $cuenta['id'],
                 'monto_pagado' => $montoAAbonar,
                 'fecha_pago' => date('Y-m-d H:i:s'),
                 'metodo_pago' => $metodo,
                 'nota' => $nota,
                 'usuario_id' => $userId
             ];
-            $this->db->insert('historial_pagos_cp', $historialData);
+            $this->db->insert('cuentas_por_pagar_pagos', $historialData);
             
             $nuevoSaldo = $saldo - $montoAAbonar;
             $estado = ($nuevoSaldo <= 0) ? 'Pagado' : 'Activo';
