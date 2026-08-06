@@ -128,7 +128,7 @@ class Transferencias extends MY_Controller {
             $this->db->where('producto_id', $prod_id)->where('almacen_id', $origen_id);
             $stockOrigen = $this->db->get('inventario_stock')->row();
             if ($stockOrigen) {
-                $this->db->set('stock', 'stock - ' . $cantidad, FALSE)->where('id', $stockOrigen->id)->update('inventario_stock');
+                $this->db->set('stock', 'stock - ' . $cantidad, FALSE)->where('producto_id', $prod_id)->where('almacen_id', $origen_id)->update('inventario_stock');
             } else {
                 // Genera negativo si no existia
                 $this->db->insert('inventario_stock', ['producto_id' => $prod_id, 'almacen_id' => $origen_id, 'stock' => -$cantidad]);
@@ -138,7 +138,7 @@ class Transferencias extends MY_Controller {
             $this->db->where('producto_id', $prod_id)->where('almacen_id', $destino_id);
             $stockDestino = $this->db->get('inventario_stock')->row();
             if ($stockDestino) {
-                $this->db->set('stock', 'stock + ' . $cantidad, FALSE)->where('id', $stockDestino->id)->update('inventario_stock');
+                $this->db->set('stock', 'stock + ' . $cantidad, FALSE)->where('producto_id', $prod_id)->where('almacen_id', $destino_id)->update('inventario_stock');
             } else {
                 $this->db->insert('inventario_stock', ['producto_id' => $prod_id, 'almacen_id' => $destino_id, 'stock' => $cantidad]);
             }
