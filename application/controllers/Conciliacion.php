@@ -306,7 +306,8 @@ class Conciliacion extends MY_Controller
         $filters = [
             'status' => $this->input->get('status'),
             'proveedor_id' => $this->input->get('proveedor_id'),
-            'almacen_id' => $this->input->get('almacen_id')
+            'almacen_id' => $this->input->get('almacen_id'),
+            'nro_comprobante' => $this->input->get('nro_comprobante')
         ];
 
         $pedidos = $this->Conciliacion_model->get_pedidos($filters);
