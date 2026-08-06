@@ -29,21 +29,32 @@ class CuentasPorPagar extends MY_Controller {
     public function registrar_pago()
     {
         $this->check_permission('Cuentas por Pagar', 'eliminar');
-        $data = json_decode(file_get_contents('php://input'), true);
+        
+        $cuentaId = intval($this->input->post('cuenta_id'));
+        $montoPagado = floatval($this->input->post('monto_pagado'));
+        $nota = trim($this->input->post('nota') ?? '');
+        $metodo = trim($this->input->post('metodo_pago') ?? 'Efectivo');
+        
+        if (empty($cuentaId) || empty($montoPagado)) {
+            $data = json_decode(file_get_contents('php://input'), true);
+            if (!empty($data)) {
+                $cuentaId = intval($data['cuenta_id'] ?? 0);
+                $montoPagado = floatval($data['monto_pagado'] ?? 0);
+                $nota = isset($data['nota']) ? trim($data['nota']) : '';
+                $metodo = isset($data['metodo_pago']) ? trim($data['metodo_pago']) : 'Efectivo';
+            }
+        }
+        
+        $userId = $this->input->get_request_header('X-User-Id', TRUE) ?: 1;
 
-        if (empty($data['cuenta_id']) || empty($data['monto_pagado'])) {
+        if (empty($cuentaId) || empty($montoPagado)) {
             return $this->output
                 ->set_status_header(400)
                 ->set_content_type('application/json')
                 ->set_output(json_encode(['error' => 'ID de cuenta y monto del pago son requeridos.']));
         }
 
-        $cuentaId = intval($data['cuenta_id']);
-        $montoPagado = floatval($data['monto_pagado']);
-        $nota = isset($data['nota']) ? trim($data['nota']) : '';
-        $metodo = isset($data['metodo_pago']) ? trim($data['metodo_pago']) : 'Efectivo';
-        $userId = $this->input->get_request_header('X-User-Id', TRUE) ?: 1;
-
+        $montoPagado = floatval($montoPagado);
         if ($montoPagado <= 0) {
             return $this->output
                 ->set_status_header(400)
@@ -75,6 +86,31 @@ class CuentasPorPagar extends MY_Controller {
                 ]));
         }
 
+        $comprobante = null;
+        if (isset($_FILES['comprobante_file']) && !empty($_FILES['comprobante_file']['name'])) {
+            $upload_path = FCPATH . 'uploads/comprobantes_pagos/';
+            if (!is_dir($upload_path)) {
+                mkdir($upload_path, 0777, true);
+            }
+            
+            $config['upload_path'] = $upload_path;
+            $config['allowed_types'] = 'gif|jpg|jpeg|png|webp|pdf';
+            $config['max_size'] = 10240; // 10MB
+            $config['file_name'] = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $_FILES['comprobante_file']['name']);
+
+            $this->load->library('upload', $config);
+
+            if ($this->upload->do_upload('comprobante_file')) {
+                $uploadData = $this->upload->data();
+                $comprobante = $uploadData['file_name'];
+            } else {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(400)
+                    ->set_output(json_encode(['error' => strip_tags($this->upload->display_errors())]));
+            }
+        }
+
         $this->db->trans_start();
 
         $historialData = [
@@ -83,7 +119,8 @@ class CuentasPorPagar extends MY_Controller {
             'fecha_pago' => date('Y-m-d H:i:s'),
             'metodo_pago' => $metodo,
             'nota' => $nota,
-            'usuario_id' => $userId
+            'usuario_id' => $userId,
+            'comprobante' => $comprobante
         ];
         $this->db->insert('cuentas_por_pagar_pagos', $historialData);
         $pagoId = $this->db->insert_id();
