@@ -22,11 +22,11 @@ class Transferencias extends MY_Controller {
      */
     public function index() {
         $this->check_permission('Transferencias', 'ver');
-        $this->db->select('t.*, o.nombre as origen_nombre, d.nombre as destino_nombre, u.name as usuario_nombre');
+        $this->db->select('t.*, o.nombre as origen_nombre, d.nombre as destino_nombre, u.nombre as usuario_nombre');
         $this->db->from('transferencias t');
         $this->db->join('depositos o', 't.almacen_origen_id = o.id', 'left');
         $this->db->join('depositos d', 't.almacen_destino_id = d.id', 'left');
-        $this->db->join('users u', 't.usuario_id = u.id', 'left');
+        $this->db->join('vendedores u', 't.usuario_id = u.id', 'left');
 
         $start_date = $this->input->get('start_date');
         $end_date = $this->input->get('end_date');
@@ -271,13 +271,16 @@ class Transferencias extends MY_Controller {
             p.id as master_id,
             p.idprod,
             p.descripcion,
+            p.marca,
+            p.categoria,
+            p.unidad,
             COALESCE(SUM(i.cantidad), 0) as stock_actual,
             MAX(i.id) as inventario_id
         ', FALSE);
         $this->db->from('productos p');
         $this->db->join('inventarios i', 'p.idprod = i.idprod AND i.deposito = ' . $almacen_id, 'left', FALSE);
         $this->db->where_in('p.idprod', $codigos_clean);
-        $this->db->group_by('p.id, p.idprod, p.descripcion');
+        $this->db->group_by('p.id, p.idprod, p.descripcion, p.marca, p.categoria, p.unidad');
         
         $productos = $this->db->get()->result_array();
 
