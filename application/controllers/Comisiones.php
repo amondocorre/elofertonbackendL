@@ -57,6 +57,12 @@ class Comisiones extends MY_Controller {
 
         if ($estado === 'pendientes') {
             $this->db->where('dv.pagocomision IS NULL');
+            // Excluir vendedores que ya están en un lote pendiente de confirmación en el historial
+            $this->db->where("dv.vendedor NOT IN (SELECT vendedor_id FROM historial_pagos_comisiones WHERE estado = 'Pendiente_Confirmar')", NULL, FALSE);
+        } elseif ($estado === 'confirmacion_pendiente') {
+            $this->db->where('dv.pagocomision IS NULL');
+            // Únicamente los vendedores que tienen un lote masivo pendiente de confirmación
+            $this->db->where("dv.vendedor IN (SELECT vendedor_id FROM historial_pagos_comisiones WHERE estado = 'Pendiente_Confirmar')", NULL, FALSE);
         } else {
             $this->db->where('dv.pagocomision IS NOT NULL');
         }
