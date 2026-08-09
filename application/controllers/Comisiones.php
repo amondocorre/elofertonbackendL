@@ -245,6 +245,11 @@ class Comisiones extends MY_Controller {
         $query = $this->db->get();
         $resultados = $query->result();
 
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($resultados));
+    }
+
     /**
      * Obtiene el listado completo de vendedores activos
      */
