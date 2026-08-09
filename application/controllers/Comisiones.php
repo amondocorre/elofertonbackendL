@@ -44,7 +44,15 @@ class Comisiones extends MY_Controller {
 
         $sucursal_id = $this->input->get('sucursal_id');
         if (!empty($sucursal_id)) {
-            $this->db->where('v.ciudad', $sucursal_id);
+            if ($sucursal_id === 'sin_sucursal') {
+                $this->db->group_start();
+                $this->db->where('v.ciudad IS NULL');
+                $this->db->or_where('v.ciudad', '');
+                $this->db->or_where('v.ciudad', '0');
+                $this->db->group_end();
+            } else {
+                $this->db->where('v.ciudad', $sucursal_id);
+            }
         }
 
         if ($estado === 'pendientes') {
@@ -233,6 +241,19 @@ class Comisiones extends MY_Controller {
         $this->db->join('vendedores ug', 'h.usuario_genero = ug.id', 'left');
         $this->db->join('vendedores uc', 'h.usuario_confirmo = uc.id', 'left');
         $this->db->order_by('h.fecha_generacion', 'DESC');
+        
+        $query = $this->db->get();
+        $resultados = $query->result();
+
+    /**
+     * Obtiene el listado completo de vendedores activos
+     */
+    public function index_vendedores() {
+        $this->check_permission('Comisiones', 'ver');
+        $this->db->select('id, nombre, ciudad as sucursal_id, recibe_comision');
+        $this->db->from('vendedores');
+        $this->db->where('estado', 'activo');
+        $this->db->order_by('nombre', 'ASC');
         
         $query = $this->db->get();
         $resultados = $query->result();
