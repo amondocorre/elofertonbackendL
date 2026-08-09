@@ -660,10 +660,10 @@ class Productos extends MY_Controller {
                 $tipo_label = 'venta';
                 // Buscar cliente en ventas
                 if ($mov->referencia_id) {
-                    $venta = $this->db->select('cliente, idventa')->where('id', intval($mov->referencia_id))->or_where('idventa', $mov->referencia_id)->get('ventas')->row();
+                    $venta = $this->db->select('id, cliente, idventa')->where('id', intval($mov->referencia_id))->or_where('idventa', $mov->referencia_id)->get('ventas')->row();
                     if ($venta) {
                         $cliente = $venta->cliente;
-                        $nro_documento = $venta->idventa;
+                        $nro_documento = $venta->id; // Retornar el id secuencial numérico
                     }
                 }
             } elseif (stripos($mov->tipo, 'COMPRA') !== false) {

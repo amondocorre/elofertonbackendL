@@ -27,16 +27,24 @@ class Comisiones extends MY_Controller {
         $estado = $this->input->get('estado') ?: 'pendientes';
         
         // Obtener IDs de vendedores y sus nombres
-        $this->db->select('dv.vendedor as vendedor_id, v.nombre as vendedor_nombre, SUM(dv.comision * dv.cuantos) as total_comision, COUNT(dv.id) as cantidad_productos, MAX(dv.pagocomision) as fecha_pago');
+        $this->db->select('dv.vendedor as vendedor_id, v.nombre as vendedor_nombre, v.carnet, v.nro_cuenta, v.banco, v.ciudad as sucursal_id, d.nombre as sucursal_nombre, SUM(dv.comision * dv.cuantos) as total_comision, COUNT(dv.id) as cantidad_productos, MAX(dv.pagocomision) as fecha_pago');
         $this->db->from('detalleventas dv');
         $this->db->join('vendedores v', 'dv.vendedor = v.id', 'left');
+        $this->db->join('depositos d', 'v.ciudad = d.id', 'left');
         
         // Solo las filas que generen comisión
         $this->db->where('dv.comision >', 0);
+        // Excluir a los que tienen recibe_comision = 0
+        $this->db->where('(v.recibe_comision IS NULL OR v.recibe_comision = 1)');
 
         $vendedor_id = $this->input->get('vendedor_id');
         if (!empty($vendedor_id)) {
             $this->db->where('dv.vendedor', $vendedor_id);
+        }
+
+        $sucursal_id = $this->input->get('sucursal_id');
+        if (!empty($sucursal_id)) {
+            $this->db->where('v.ciudad', $sucursal_id);
         }
 
         if ($estado === 'pendientes') {
@@ -93,37 +101,43 @@ class Comisiones extends MY_Controller {
     }
 
     /**
-     * Recibe un array de IDs de vendedores y marca sus comisiones pendientes como pagadas.
+     * Paso 1: Registra las comisiones como "Pendiente_Confirmar" en historial_pagos_comisiones
+     * y genera la respuesta con los datos de cuenta de los vendedores para descargar el archivo de texto.
      */
-    public function pagar_comisiones() {
+    public function generar_pago_masivo() {
         $this->check_permission('Comisiones', 'editar');
         $data = json_decode(file_get_contents('php://input'), true);
 
-        if (!$data || !isset($data['vendedores_ids']) || !is_array($data['vendedores_ids'])) {
+        $vendedores = $data['vendedores'] ?? [];
+        $usuario_id = $this->input->get_request_header('X-User-Id', TRUE) ?: 1;
+
+        if (empty($vendedores)) {
             return $this->output
                 ->set_status_header(400)
                 ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'Datos inválidos. Se requiere un array de IDs de vendedores.']));
-        }
-
-        $vendedores_ids = $data['vendedores_ids'];
-        
-        if (empty($vendedores_ids)) {
-             return $this->output
-                ->set_status_header(400)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'No se enviaron vendedores a pagar.']));
+                ->set_output(json_encode(['error' => 'No se enviaron datos de vendedores para pagar.']));
         }
 
         $this->db->trans_start();
 
-        $fecha_pago = date('Y-m-d H:i:s');
+        $fecha_generacion = date('Y-m-d H:i:s');
+        $historial_rows = [];
 
-        // Actualizar pagocomision para todos los registros pendientes de los vendedores seleccionados
-        $this->db->where_in('vendedor', $vendedores_ids);
-        $this->db->where('comision >', 0);
-        $this->db->where('pagocomision IS NULL');
-        $this->db->update('detalleventas', ['pagocomision' => $fecha_pago]);
+        foreach ($vendedores as $v) {
+            $historial_rows[] = [
+                'vendedor_id'      => intval($v['vendedor_id']),
+                'monto'            => floatval($v['monto']),
+                'nro_cuenta'       => $v['nro_cuenta'] ?? null,
+                'banco'            => $v['banco'] ?? null,
+                'estado'           => 'Pendiente_Confirmar',
+                'usuario_genero'   => $usuario_id,
+                'fecha_generacion' => $fecha_generacion
+            ];
+        }
+
+        if (!empty($historial_rows)) {
+            $this->db->insert_batch('historial_pagos_comisiones', $historial_rows);
+        }
 
         $this->db->trans_complete();
 
@@ -131,15 +145,100 @@ class Comisiones extends MY_Controller {
             return $this->output
                 ->set_status_header(500)
                 ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'Hubo un error al registrar el pago de las comisiones.']));
+                ->set_output(json_encode(['error' => 'Error al generar el registro de pago masivo.']));
         }
 
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode([
-                'message' => 'Comisiones pagadas exitosamente.',
-                'fecha_pago' => $fecha_pago,
-                'vendedores_afectados' => count($vendedores_ids)
+                'message' => 'Lotes de pago masivo registrados en estado Pendiente de Confirmar.',
+                'fecha' => $fecha_generacion
             ]));
+    }
+
+    /**
+     * Paso 2: Confirma el pago de comisiones de forma selectiva.
+     * Marca los confirmados como 'Confirmado' en el historial, y en detalleventas actualiza pagocomision con la fecha/hora.
+     * Los no confirmados se eliminan del historial (volviendo a quedar pendientes en el listado general).
+     */
+    public function confirmar_pago_masivo() {
+        $this->check_permission('Comisiones', 'editar');
+        $data = json_decode(file_get_contents('php://input'), true);
+
+        $confirmados = $data['confirmados'] ?? []; // Array de {vendedor_id, monto}
+        $rechazados = $data['rechazados'] ?? []; // Array de {vendedor_id}
+        $usuario_id = $this->input->get_request_header('X-User-Id', TRUE) ?: 1;
+
+        if (empty($confirmados) && empty($rechazados)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'No se enviaron datos para confirmar o rechazar.']));
+        }
+
+        $this->db->trans_start();
+        $hoy = date('Y-m-d H:i:s');
+
+        // Procesar confirmados
+        foreach ($confirmados as $c) {
+            $vend_id = intval($c['vendedor_id']);
+            
+            // 1. Actualizar el registro del historial a 'Confirmado'
+            $this->db->where('vendedor_id', $vend_id);
+            $this->db->where('estado', 'Pendiente_Confirmar');
+            $this->db->update('historial_pagos_comisiones', [
+                'estado' => 'Confirmado',
+                'usuario_confirmo' => $usuario_id,
+                'fecha_confirmacion' => $hoy
+            ]);
+
+            // 2. Marcar como pagados los productos en detalleventas
+            $this->db->where('vendedor', $vend_id);
+            $this->db->where('comision >', 0);
+            $this->db->where('pagocomision IS NULL');
+            $this->db->update('detalleventas', ['pagocomision' => $hoy]);
+        }
+
+        // Procesar rechazados (se eliminan del historial de pagos masivos para volver a listarse en pendientes)
+        foreach ($rechazados as $r) {
+            $vend_id = intval($r['vendedor_id']);
+            $this->db->where('vendedor_id', $vend_id);
+            $this->db->where('estado', 'Pendiente_Confirmar');
+            $this->db->delete('historial_pagos_comisiones');
+        }
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Error al procesar la confirmación de pago masivo.']));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['message' => 'Confirmación de pago procesada correctamente.']));
+    }
+
+    /**
+     * Obtiene el listado de todos los pagos registrados (tanto Confirmados como Pendientes)
+     */
+    public function listar_historial_pagos() {
+        $this->check_permission('Comisiones', 'ver');
+        
+        $this->db->select('h.*, v.nombre as vendedor_nombre, ug.nombre as usuario_genero_nombre, uc.nombre as usuario_confirmo_nombre');
+        $this->db->from('historial_pagos_comisiones h');
+        $this->db->join('vendedores v', 'h.vendedor_id = v.id', 'left');
+        $this->db->join('vendedores ug', 'h.usuario_genero = ug.id', 'left');
+        $this->db->join('vendedores uc', 'h.usuario_confirmo = uc.id', 'left');
+        $this->db->order_by('h.fecha_generacion', 'DESC');
+        
+        $query = $this->db->get();
+        $resultados = $query->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($resultados));
     }
 }

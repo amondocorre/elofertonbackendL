@@ -123,7 +123,10 @@ class Usuarios extends CI_Controller {
             'direccion' => $direccion,
             'carnet' => $carnet,
             'estado' => $estado,
-            'cargo' => $cargo
+            'cargo' => $cargo,
+            'recibe_comision' => isset($data['recibe_comision']) ? intval($data['recibe_comision']) : 1,
+            'nro_cuenta' => $data['nro_cuenta'] ?? null,
+            'banco' => $data['banco'] ?? null
         ];
 
         // Solo actualizar contraseña si se ha proporcionado una nueva
