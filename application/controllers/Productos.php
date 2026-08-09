@@ -529,4 +529,183 @@ class Productos extends MY_Controller {
             ->set_status_header(200)
             ->set_output(json_encode($historial));
     }
+
+    /**
+     * Obtiene el listado simple de todos los productos (activos e inactivos)
+     */
+    public function index_simple() {
+        $this->check_permission('Kardex de producto', 'ver');
+        $this->db->select('id, idprod, descripcion, marca, categoria, unidad, estado');
+        $this->db->from('productos');
+        $this->db->order_by('descripcion', 'ASC');
+        $productos = $this->db->get()->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(200)
+            ->set_output(json_encode($productos));
+    }
+
+    /**
+     * Genera el Kardex de movimientos de un producto filtrando por sucursal y fecha
+     */
+    public function generar_kardex() {
+        $this->check_permission('Kardex de producto', 'ver');
+        
+        $producto_id = intval($this->input->get('producto_id'));
+        $almacen_id = $this->input->get('almacen_id') ? intval($this->input->get('almacen_id')) : null;
+        $fecha = $this->input->get('fecha'); // Formato Y-m-d
+
+        if (!$producto_id) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'El ID del producto es requerido.']));
+        }
+
+        // Obtener datos básicos del producto
+        $prodMaster = $this->db->where('id', $producto_id)->get('productos')->row();
+        if (!$prodMaster) {
+            return $this->output
+                ->set_status_header(404)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Producto no encontrado.']));
+        }
+
+        // 1. Si hay filtro de fecha, calcular el saldo anterior acumulado (ingresos - egresos) antes de esa fecha
+        $saldo_anterior = 0;
+        $ingresos_anteriores = 0;
+        $egresos_anteriores = 0;
+
+        if (!empty($fecha)) {
+            $this->db->select('tipo_movimiento, cantidad');
+            $this->db->from('kardex');
+            $this->db->where('producto_id', $producto_id);
+            $this->db->where('DATE(creado_at) <', $fecha);
+            if ($almacen_id) {
+                $this->db->where('almacen_id', $almacen_id);
+            }
+            $query_ant = $this->db->get()->result();
+
+            foreach ($query_ant as $m) {
+                if ($m->tipo_movimiento === 'INGRESO') {
+                    $ingresos_anteriores += floatval($m->cantidad);
+                } else {
+                    $egresos_anteriores += floatval($m->cantidad);
+                }
+            }
+            $saldo_anterior = $ingresos_anteriores - $egresos_anteriores;
+        }
+
+        // 2. Obtener movimientos que aplican (si hay fecha, >= fecha; si no, desde el inicio)
+        $this->db->select('
+            k.creado_at as fecha,
+            d.nombre as sucursal,
+            k.concepto as tipo,
+            k.referencia_id,
+            k.tipo_movimiento,
+            k.cantidad,
+            k.lote_id
+        ', FALSE);
+        $this->db->from('kardex k');
+        $this->db->join('depositos d', 'k.almacen_id = d.id', 'left');
+        $this->db->where('k.producto_id', $producto_id);
+        
+        if (!empty($fecha)) {
+            $this->db->where('DATE(k.creado_at) >=', $fecha);
+        }
+        if ($almacen_id) {
+            $this->db->where('k.almacen_id', $almacen_id);
+        }
+
+        $this->db->order_by('k.creado_at', 'ASC');
+        $this->db->order_by('k.id', 'ASC');
+        $movimientos = $this->db->get()->result();
+
+        // 3. Procesar y estructurar la información del Kardex
+        $kardex_report = [];
+        $saldo_acumulado = $saldo_anterior;
+
+        // Si hay fecha y por lo tanto saldo anterior, insertar la fila de saldo acumulado inicial
+        if (!empty($fecha)) {
+            $kardex_report[] = [
+                'fecha' => $fecha,
+                'sucursal' => 'ANTERIOR',
+                'tipo' => 'Saldo Inicial Acumulado',
+                'nro_documento' => '-',
+                'cliente' => '-',
+                'ingreso' => $ingresos_anteriores,
+                'egreso' => $egresos_anteriores,
+                'saldo' => $saldo_anterior
+            ];
+        }
+
+        foreach ($movimientos as $mov) {
+            $ingreso = null;
+            $egreso = null;
+            $nro_documento = $mov->referencia_id ? $mov->referencia_id : '-';
+            $cliente = '-';
+
+            if ($mov->tipo_movimiento === 'INGRESO') {
+                $ingreso = floatval($mov->cantidad);
+                $saldo_acumulado += $ingreso;
+            } else {
+                $egreso = floatval($mov->cantidad);
+                $saldo_acumulado -= $egreso;
+            }
+
+            // Normalizar el tipo de concepto y buscar información del cliente/proveedor/número de compra
+            $tipo_label = $mov->tipo;
+            if (stripos($mov->tipo, 'VENTA') !== false) {
+                $tipo_label = 'venta';
+                // Buscar cliente en ventas
+                if ($mov->referencia_id) {
+                    $venta = $this->db->select('cliente, idventa')->where('id', intval($mov->referencia_id))->or_where('idventa', $mov->referencia_id)->get('ventas')->row();
+                    if ($venta) {
+                        $cliente = $venta->cliente;
+                        $nro_documento = $venta->idventa;
+                    }
+                }
+            } elseif (stripos($mov->tipo, 'COMPRA') !== false) {
+                $tipo_label = 'compra';
+                if ($mov->lote_id) {
+                    // Buscar en inventarios para ver el proveedor
+                    $lote = $this->db->select('proveedor')->where('id', intval($mov->lote_id))->get('inventarios')->row();
+                    if ($lote) {
+                        $cliente = $lote->proveedor;
+                    }
+                }
+                // Si hay referencia de compra, obtener nro de compra
+                if ($mov->referencia_id) {
+                    $comp = $this->db->select('idcompra')->where('id', intval($mov->referencia_id))->or_where('idcompra', $mov->referencia_id)->get('compras')->row();
+                    if ($comp) {
+                        $nro_documento = $comp->idcompra;
+                    }
+                }
+            } elseif (stripos($mov->tipo, 'TRANSFERENCIA') !== false || stripos($mov->tipo, 'TRASPASO') !== false) {
+                $tipo_label = 'transferencia';
+            } elseif (stripos($mov->tipo, 'DEVOLUCION') !== false) {
+                $tipo_label = 'devolucion';
+            }
+
+            $kardex_report[] = [
+                'fecha' => date('Y-m-d H:i:s', strtotime($mov->fecha)),
+                'sucursal' => $mov->sucursal ? $mov->sucursal : 'General',
+                'tipo' => $tipo_label,
+                'nro_documento' => $nro_documento,
+                'cliente' => $cliente,
+                'ingreso' => $ingreso,
+                'egreso' => $egreso,
+                'saldo' => $saldo_acumulado
+            ];
+        }
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode([
+                'producto' => $prodMaster,
+                'kardex' => $kardex_report
+            ]));
+    }
 }

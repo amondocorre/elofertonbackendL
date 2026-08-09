@@ -66,6 +66,9 @@ class Conciliacion_model extends CI_Model
         if (!empty($filters['almacen_id'])) {
             $this->db->where('p.almacen_id', intval($filters['almacen_id']));
         }
+        if (!empty($filters['nro_comprobante'])) {
+            $this->db->like('cf.nro_comprobante', $filters['nro_comprobante']);
+        }
 
         $this->db->order_by('p.creado_at', 'DESC');
         return $this->db->get()->result_array();
