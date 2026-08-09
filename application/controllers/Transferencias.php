@@ -144,7 +144,7 @@ class Transferencias extends MY_Controller {
             }
 
             // === B. ACTUALIZAR INVENTARIOS (SISTEMA ANTIGUO / LOTES) ===
-            // Restar origen (FIFO o buscar primer lote disponible)
+            // Restar origen (FIFO o buscar primer lote disponible) y crear los lotes correspondientes en el destino
             $this->db->where('idprod', $idprod)->where('deposito', $origen_id)->where('cantidad >', 0)->order_by('fecha_ingreso', 'ASC');
             $lotesOrigen = $this->db->get('inventarios')->result();
             $cantPendiente = $cantidad;
@@ -153,31 +153,75 @@ class Transferencias extends MY_Controller {
             foreach ($lotesOrigen as $lote) {
                 if ($cantPendiente <= 0) break;
                 $descuento = min($lote->cantidad, $cantPendiente);
+                
+                // Restar del lote origen
                 $this->db->set('cantidad', 'cantidad - ' . $descuento, FALSE)->where('id', $lote->id)->update('inventarios');
+                
+                // Crear un nuevo lote en el destino que mantenga los precios de compra y comisiones del lote origen
+                $nuevoLoteDestino = [
+                    'idprod' => $idprod,
+                    'descripcion' => $lote->descripcion,
+                    'marca' => $lote->marca,
+                    'idmarca' => $lote->idmarca,
+                    'categoria' => $lote->categoria,
+                    'idcategoria' => $lote->idcategoria,
+                    'unidad' => $lote->unidad,
+                    'cantidad' => $descuento,
+                    'cantidad_inicial' => $descuento,
+                    'preciolocal' => $lote->preciolocal, // Conserva precio de compra de origen
+                    'precioventa' => $lote->precioventa, // Conserva precio de venta de origen
+                    'preciomayor' => $lote->preciomayor,
+                    'comision' => $lote->comision,       // Conserva comisiones
+                    'deposito' => $destino_id,
+                    'proveedor' => $lote->proveedor,
+                    'imagenes' => $lote->imagenes,
+                    'fecha_ingreso' => date('Y-m-d H:i:s')
+                ];
+                $this->db->insert('inventarios', $nuevoLoteDestino);
+                $loteDestinoId = $this->db->insert_id();
+
+                // Registrar en Kardex salida de este lote origen
+                $this->db->insert('kardex', [
+                    'producto_id' => $prod_id,
+                    'almacen_id' => $origen_id,
+                    'lote_id' => $lote->id,
+                    'cantidad' => $descuento,
+                    'concepto' => 'TRANSFERENCIA SALIDA',
+                    'tipo_movimiento' => 'EGRESO',
+                    'referencia_id' => $transferencia_id,
+                    'fecha_registro' => date('Y-m-d H:i:s')
+                ]);
+
+                // Registrar en Kardex entrada de este nuevo lote en el destino
+                $this->db->insert('kardex', [
+                    'producto_id' => $prod_id,
+                    'almacen_id' => $destino_id,
+                    'lote_id' => $loteDestinoId,
+                    'cantidad' => $descuento,
+                    'concepto' => 'TRANSFERENCIA ENTRADA',
+                    'tipo_movimiento' => 'INGRESO',
+                    'referencia_id' => $transferencia_id,
+                    'fecha_registro' => date('Y-m-d H:i:s')
+                ]);
+
                 $cantPendiente -= $descuento;
                 $ultimoLote = $lote;
             }
 
-            // Si falta, restar al ultimo lote o al primero que haya
+            // Si falta cantidad (ej. stock negativo en origen), generamos la salida y entrada remanente basada en el último lote
             if ($cantPendiente > 0) {
                 if (!$ultimoLote) {
                     $ultimoLote = $this->db->where('idprod', $idprod)->where('deposito', $origen_id)->get('inventarios')->row();
                 }
+                $base = $ultimoLote ? $ultimoLote : $prodMaster;
+
+                // Restar del lote base
                 if ($ultimoLote) {
                     $this->db->set('cantidad', 'cantidad - ' . $cantPendiente, FALSE)->where('id', $ultimoLote->id)->update('inventarios');
                 }
-            }
 
-            // Sumar destino (Buscar lote existente o crear uno nuevo)
-            $this->db->where('idprod', $idprod)->where('deposito', $destino_id);
-            $loteDestino = $this->db->get('inventarios')->row();
-            
-            if ($loteDestino) {
-                $this->db->set('cantidad', 'cantidad + ' . $cantidad, FALSE)->where('id', $loteDestino->id)->update('inventarios');
-            } else {
-                // Crear lote si no existe basandose en el master o un lote viejo
-                $base = $ultimoLote ? $ultimoLote : $prodMaster;
-                $nuevoLote = [
+                // Crear el lote correspondiente en el destino
+                $nuevoLoteDestino = [
                     'idprod' => $idprod,
                     'descripcion' => $prodMaster->descripcion,
                     'marca' => $prodMaster->marca,
@@ -185,8 +229,8 @@ class Transferencias extends MY_Controller {
                     'categoria' => $prodMaster->categoria,
                     'idcategoria' => $prodMaster->idcategoria ?? 0,
                     'unidad' => $prodMaster->unidad,
-                    'cantidad' => $cantidad,
-                    'cantidad_inicial' => $cantidad,
+                    'cantidad' => $cantPendiente,
+                    'cantidad_inicial' => $cantPendiente,
                     'preciolocal' => isset($base->preciolocal) ? $base->preciolocal : $prodMaster->preciolocal,
                     'precioventa' => isset($base->precioventa) ? $base->precioventa : $prodMaster->precioventa,
                     'preciomayor' => $prodMaster->nuevoprecio ?? $prodMaster->precioventa,
@@ -196,32 +240,33 @@ class Transferencias extends MY_Controller {
                     'imagenes' => $prodMaster->imagen ?? null,
                     'fecha_ingreso' => date('Y-m-d H:i:s')
                 ];
-                $this->db->insert('inventarios', $nuevoLote);
-            }
+                $this->db->insert('inventarios', $nuevoLoteDestino);
+                $loteDestinoId = $this->db->insert_id();
 
-            // === C. REGISTRO EN KARDEX ===
-            // Egreso origen
-            $this->db->insert('kardex', [
-                'producto_id' => $prod_id,
-                'almacen_id' => $origen_id,
-                'lote_id' => $ultimoLote ? $ultimoLote->id : 0,
-                'cantidad' => $cantidad,
-                'concepto' => 'TRANSFERENCIA SALIDA',
-                'tipo_movimiento' => 'EGRESO',
-                'referencia_id' => $transferencia_id,
-                'fecha_registro' => date('Y-m-d H:i:s')
-            ]);
-            // Ingreso destino
-            $this->db->insert('kardex', [
-                'producto_id' => $prod_id,
-                'almacen_id' => $destino_id,
-                'lote_id' => $loteDestino ? $loteDestino->id : ($this->db->insert_id() ?? 0),
-                'cantidad' => $cantidad,
-                'concepto' => 'TRANSFERENCIA ENTRADA',
-                'tipo_movimiento' => 'INGRESO',
-                'referencia_id' => $transferencia_id,
-                'fecha_registro' => date('Y-m-d H:i:s')
-            ]);
+                // Kardex salida
+                $this->db->insert('kardex', [
+                    'producto_id' => $prod_id,
+                    'almacen_id' => $origen_id,
+                    'lote_id' => $ultimoLote ? $ultimoLote->id : 0,
+                    'cantidad' => $cantPendiente,
+                    'concepto' => 'TRANSFERENCIA SALIDA',
+                    'tipo_movimiento' => 'EGRESO',
+                    'referencia_id' => $transferencia_id,
+                    'fecha_registro' => date('Y-m-d H:i:s')
+                ]);
+
+                // Kardex entrada
+                $this->db->insert('kardex', [
+                    'producto_id' => $prod_id,
+                    'almacen_id' => $destino_id,
+                    'lote_id' => $loteDestinoId,
+                    'cantidad' => $cantPendiente,
+                    'concepto' => 'TRANSFERENCIA ENTRADA',
+                    'tipo_movimiento' => 'INGRESO',
+                    'referencia_id' => $transferencia_id,
+                    'fecha_registro' => date('Y-m-d H:i:s')
+                ]);
+            }
         }
 
         $this->db->trans_complete();
