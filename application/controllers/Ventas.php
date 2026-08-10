@@ -606,11 +606,15 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, p.idprod AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion, dv.comision AS comision_pagada, p.comision AS comision_producto');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, COALESCE(i.idprod, p_old.idprod, dv.idprod) AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion, dv.comision AS comision_pagada, COALESCE(p.comision, p_old.comision) AS comision_producto');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
-        // Para compatibilidad con datos corruptos y datos nuevos, intentamos unir productos usando dv.idprod
-        $this->db->join('productos p', 'dv.idprod = p.idprod', 'left');
+        // Unir con inventarios (lotes) para obtener el SKU real en los nuevos datos
+        $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
+        // Unir con productos a través del lote
+        $this->db->join('productos p', 'i.idprod = p.idprod', 'left');
+        // Unir con productos directamente por si es un registro antiguo (donde dv.idprod ya era el SKU)
+        $this->db->join('productos p_old', 'dv.idprod = p_old.idprod', 'left');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('vendedores u', 'v.vendedor = u.id', 'left');
 
@@ -1553,7 +1557,14 @@ class Ventas extends CI_Controller {
         $sucursalAlias = 'SUC';
 
         if ($sucursalId) {
-            $deposito = $this->db->where('id', $sucursalId)->get('depositos')->row();
+            $this->db->group_start();
+            $this->db->where('id', $sucursalId);
+            if (!is_numeric($sucursalId)) {
+                $this->db->or_like('nombre', $sucursalId);
+            }
+            $this->db->group_end();
+            $deposito = $this->db->get('depositos')->row();
+
             if ($deposito && !empty($deposito->nombre)) {
                 $sucursalAlias = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', substr($deposito->nombre, 0, 8)));
             }

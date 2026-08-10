@@ -112,7 +112,7 @@ class VentasMayorista extends MY_Controller {
         }
         $depositoId = intval($data['idneg'] ?? 1);
         foreach ($data['cart'] as &$item) {
-            $inv = $this->db->where('id', intval($item['id']))->get('inventarios')->row();
+            $inv = $this->db->where('id', intval($item['id']))->where('deposito', $depositoId)->get('inventarios')->row();
             if (!$inv && !empty($item['idprod'])) {
                 $inv = $this->db->where('idprod', $item['idprod'])->where('deposito', $depositoId)->order_by('precioventa','DESC')->get('inventarios')->row();
                 if ($inv) { $item['id'] = $inv->id; }
@@ -151,7 +151,7 @@ class VentasMayorista extends MY_Controller {
         }
 
         foreach ($data['cart'] as $item) {
-            $inv = $this->db->where('id', intval($item['id']))->get('inventarios')->row();
+            $inv = $this->db->where('id', intval($item['id']))->where('deposito', $depositoId)->get('inventarios')->row();
             if (!$inv) { continue; }
             $idprod = $inv->idprod; $dep = intval($inv->deposito); $cantTotal = floatval($item['cantidad']);
             $pm = $this->db->where('idprod',$idprod)->get('productos')->row(); $pmId = $pm ? $pm->id : 0;
