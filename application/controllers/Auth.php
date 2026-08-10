@@ -27,6 +27,11 @@ class Auth extends MY_Controller {
 
         // Validar contraseña en texto plano (como en el sistema antiguo)
         if ($user) {
+            // Registrar fecha y hora de último ingreso en fechault
+            $fecha_actual = date('Y-m-d H:i:s');
+            $this->db->where('id', $user->id)->update('vendedores', ['fechault' => $fecha_actual]);
+            $user->fechault = $fecha_actual;
+
             // Generar un token simple
             $token = bin2hex(random_bytes(32));
             
