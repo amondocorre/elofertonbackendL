@@ -117,8 +117,15 @@ class Productos extends MY_Controller {
         }
 
         $id = isset($data['id']) && $data['id'] !== '' && $data['id'] !== 'null' ? intval($data['id']) : null;
+        $only_image = isset($data['only_image']) && intval($data['only_image']) === 1;
+
         if ($id) {
-            $this->check_permission('Productos', 'editar');
+            if ($only_image) {
+                // Si es solo subir imagen, basta con que tenga permiso de "ver" el módulo de Productos
+                $this->check_permission('Productos', 'ver');
+            } else {
+                $this->check_permission('Productos', 'editar');
+            }
         } else {
             $this->check_permission('Productos', 'crear');
         }
@@ -164,13 +171,20 @@ class Productos extends MY_Controller {
                 mkdir($upload_path, 0777, true);
             }
             
-            $ext = pathinfo($_FILES['imagen_file']['name'], PATHINFO_EXTENSION);
+            $ext = strtolower(pathinfo($_FILES['imagen_file']['name'], PATHINFO_EXTENSION));
+            if ($ext !== 'png') {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(400)
+                    ->set_output(json_encode(['error' => 'Solo se admiten imágenes en formato PNG.']));
+            }
+
             $safe_idprod = str_replace('/', '-', $idprod);
             $safe_idprod = preg_replace('/[^a-zA-Z0-9._-]/', '', $safe_idprod);
             $new_filename = $safe_idprod . '.' . $ext;
 
             $config['upload_path'] = $upload_path;
-            $config['allowed_types'] = 'gif|jpg|jpeg|png';
+            $config['allowed_types'] = 'png';
             $config['max_size'] = 500; // 500 KB
             $config['file_name'] = $new_filename;
             $config['overwrite'] = TRUE;
@@ -223,9 +237,16 @@ class Productos extends MY_Controller {
             'estado' => $estado
         ];
 
+        if ($only_image) {
+            // Protección de datos: Si solo se sube imagen, limpiar el payload para actualizar únicamente la imagen
+            $prodData = [
+                'imagen' => $imagen
+            ];
+        }
+
         if ($id) {
             $previous = $this->db->where('id', $id)->get('productos')->row();
-            if ($previous) {
+            if ($previous && !$only_image) {
                 $userId = $this->input->get_request_header('X-User-Id', TRUE);
                 if (empty($userId)) {
                     $userId = isset($_SERVER['HTTP_X_USER_ID']) ? $_SERVER['HTTP_X_USER_ID'] : (isset($_SERVER['HTTP_X_User_Id']) ? $_SERVER['HTTP_X_User_Id'] : 0);
