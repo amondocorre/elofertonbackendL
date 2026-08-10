@@ -162,13 +162,13 @@ class VentasMayorista extends MY_Controller {
                 if ($pendiente <= 0) break;
                 $desc = min($lote->cantidad, $pendiente);
                 $this->db->where('id',$lote->id)->set('cantidad','cantidad-'.$desc,false)->update('inventarios');
-                $this->db->insert('detalleventas',['idventa'=>$idventa,'idprod'=>$lote->id,'preciolocal'=>$lote->preciolocal,'precioventa'=>$item['precioventa'],'preciofinal'=>$item['precioventa'],'cuantos'=>$desc,'comision'=>0,'descripcion'=>$item['descripcion']??$lote->descripcion,'vendedor'=>$data['vendedor']??1,'pagocomision'=>null,'observaciones'=>'','cierre'=>null]);
+                $this->db->insert('detalleventas',['idventa'=>$idventa,'idprod'=>$lote->idprod,'inventario_id'=>$lote->id,'preciolocal'=>$lote->preciolocal,'precioventa'=>$item['precioventa'],'preciofinal'=>$item['precioventa'],'cuantos'=>$desc,'comision'=>0,'descripcion'=>$item['descripcion']??$lote->descripcion,'vendedor'=>$data['vendedor']??1,'pagocomision'=>null,'observaciones'=>'','cierre'=>null]);
                 if ($pmId > 0) { $this->db->insert('kardex',['producto_id'=>$pmId,'almacen_id'=>$dep,'lote_id'=>$lote->id,'cantidad'=>$desc,'concepto'=>'VENTA MAYOR','tipo_movimiento'=>'EGRESO','referencia_id'=>$nro_venta]); }
                 $pendiente -= $desc;
             }
             if ($pendiente > 0) {
                 $this->db->where('id',$inv->id)->set('cantidad','cantidad-'.$pendiente,false)->update('inventarios');
-                $this->db->insert('detalleventas',['idventa'=>$idventa,'idprod'=>$inv->id,'preciolocal'=>$inv->preciolocal,'precioventa'=>$item['precioventa'],'preciofinal'=>$item['precioventa'],'cuantos'=>$pendiente,'comision'=>0,'descripcion'=>$item['descripcion']??$inv->descripcion,'vendedor'=>$data['vendedor']??1,'pagocomision'=>null,'observaciones'=>'Sobregiro mayorista','cierre'=>null]);
+                $this->db->insert('detalleventas',['idventa'=>$idventa,'idprod'=>$inv->idprod,'inventario_id'=>$inv->id,'preciolocal'=>$inv->preciolocal,'precioventa'=>$item['precioventa'],'preciofinal'=>$item['precioventa'],'cuantos'=>$pendiente,'comision'=>0,'descripcion'=>$item['descripcion']??$inv->descripcion,'vendedor'=>$data['vendedor']??1,'pagocomision'=>null,'observaciones'=>'Sobregiro mayorista','cierre'=>null]);
                 if ($pmId > 0) { $this->db->insert('kardex',['producto_id'=>$pmId,'almacen_id'=>$dep,'lote_id'=>$inv->id,'cantidad'=>$pendiente,'concepto'=>'VENTA MAYOR','tipo_movimiento'=>'EGRESO','referencia_id'=>$nro_venta]); }
             }
         }

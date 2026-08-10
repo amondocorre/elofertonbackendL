@@ -122,4 +122,55 @@ class Auth extends MY_Controller {
                 'branches' => $branches
             ]));
     }
+
+    /**
+     * Permite a un vendedor/usuario cambiar su contraseña de acceso.
+     */
+    public function change_password() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        $userId = $data['user_id'] ?? '';
+        $currentPassword = $data['current_password'] ?? '';
+        $newPassword = $data['new_password'] ?? '';
+
+        if (empty($userId) || empty($currentPassword) || empty($newPassword)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Todos los campos son requeridos']));
+        }
+
+        // Obtener usuario actual
+        $user = $this->db->get_where('vendedores', ['id' => intval($userId)])->row();
+
+        if (!$user) {
+            return $this->output
+                ->set_status_header(404)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Usuario no encontrado']));
+        }
+
+        // Validar contraseña actual en texto plano
+        if ($user->password !== $currentPassword) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'La contraseña actual es incorrecta']));
+        }
+
+        // Actualizar contraseña en la BD
+        $updated = $this->db->where('id', $user->id)->update('vendedores', ['password' => $newPassword]);
+
+        if (!$updated) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'No se pudo actualizar la contraseña. Intente nuevamente.']));
+        }
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['message' => 'Contraseña actualizada con éxito.']));
+    }
 }
