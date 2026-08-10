@@ -27,6 +27,7 @@ class PasarelaQr extends CI_Controller
 
         $this->load->database();
         $this->load->helper('url');
+        $this->load->library('sip_service');
 
         // Inicializar tablas si no existen en el entorno actual
         $this->initializeDatabase();
@@ -123,22 +124,16 @@ class PasarelaQr extends CI_Controller
             $alias = 'VENTA_' . time() . '_' . rand(100, 999);
         }
 
-        // Obtener configuración activa
-        $config = $this->db->get_where('bisa_qr_config', ['id' => 1])->row();
-        if (!$config) {
-            return $this->output
-                ->set_status_header(500)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'Configuración de pagos QR no encontrada']));
-        }
+        // Delegar la generación del QR a la librería Sip_service
+        $res = $this->sip_service->generateQr($alias, $amount, 'Pago Ferreteria Oferton');
 
-        // Obtener token JWT
-        $token = $this->getAccessToken($config);
-        if (!$token) {
-            // En desarrollo local sin internet, podemos simular la generación directamente
-            $simulatedId = 'SIM_QR_' . uniqid();
-            $simulatedQr = $this->generateSimulatedQrBase64($alias, $amount);
-            $this->saveTransaction($alias, $amount, $proformaId, $simulatedId, $simulatedQr);
+        if (isset($res['status']) && $res['status'] === 'success') {
+            $idQr = $res['idQr'];
+            $qrBase64 = $res['qr_base64'];
+            $simulated = $res['simulated'] ?? false;
+
+            // Registrar transacción en la BD
+            $this->saveTransaction($alias, $amount, $proformaId, $idQr, $qrBase64);
 
             return $this->output
                 ->set_status_header(200)
@@ -146,94 +141,17 @@ class PasarelaQr extends CI_Controller
                 ->set_output(json_encode([
                     'status' => 'success',
                     'alias' => $alias,
-                    'qr_base64' => $simulatedQr,
-                    'imagenQr' => $simulatedQr,
-                    'idQr' => $simulatedId,
-                    'simulated' => true
+                    'qr_base64' => $qrBase64,
+                    'imagenQr' => $qrBase64,
+                    'idQr' => $idQr,
+                    'simulated' => $simulated
                 ]));
         }
 
-        // Llamar a la API SIP para Generar QR
-        $url = $config->api_url . '/api/v1/generaQr';
-        $headers = [
-            'Authorization: Bearer ' . $token,
-            'apikeyServicio: ' . $config->service_key,
-            'Content-Type: application/json'
-        ];
-
-        // Definir vencimiento del QR (1 día de validez)
-        $expirationDate = date('d/m/Y', strtotime('+1 day'));
-
-        // Generar URL del callback
-        $callbackUrl = site_url('PasarelaQr/callback_pago');
-        
-        // Si el servidor está detrás de un proxy (como Dokploy/Traefik) y genera la IP privada del contenedor (ej: 10.0.1.94),
-        // forzamos el uso del dominio público para que el banco pueda resolver el webhook. Incluimos también [::1].
-        if (preg_match('/(localhost|127\.0\.0\.1|\[::1\]|\[::11|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)/', $callbackUrl)) {
-            $callbackUrl = 'https://apidemo.mamier.cloud/index.php/PasarelaQr/callback_pago';
-        }
-
-        $body = [
-            'alias' => $alias,
-            'monto' => number_format($amount, 2, '.', ''),
-            'callback' => $callbackUrl,
-            'detalleGlosa' => 'Pago Ferreteria Oferton',
-            'moneda' => 'BOB',
-            'fechaVencimiento' => $expirationDate,
-            'tipoSolicitud' => 'API',
-            'unicoUso' => 'true'
-        ];
-
-        $response = $this->sendPostRequest($url, $headers, $body);
-        log_message('error', 'Raw CURL Response PasarelaQr: ' . var_export($response, true));
-        $simulated = false;
-        $idQr = null;
-        $qrBase64 = null;
-
-        if ($response) {
-            $resData = json_decode($response, true);
-            log_message('error', 'Respuesta generaQr BISA: ' . $response);
-            $code = $resData['codigo'] ?? '';
-            $message = $resData['mensaje'] ?? '';
-
-            if ($code === '0000' && isset($resData['objeto'])) {
-                $idQr = $resData['objeto']['idQr'] ?? null;
-                $qrBase64 = $resData['objeto']['imagenBase64'] ?? null;
-                if (empty($qrBase64)) {
-                    $qrBase64 = $this->generateSimulatedQrBase64($alias, $amount);
-                }
-            } elseif ($code === '9999' && strpos(strtolower($message), 'permisos') !== false) {
-                // Modo simulación si hay error de permisos de IP
-                $simulated = true;
-                $idQr = 'SIM_QR_' . uniqid();
-                $qrBase64 = $this->generateSimulatedQrBase64($alias, $amount);
-            } else {
-                return $this->output
-                    ->set_status_header(500)
-                    ->set_content_type('application/json')
-                    ->set_output(json_encode(['error' => 'Error de la API del banco: ' . $message]));
-            }
-        } else {
-            // Si la conexión falla, se activa la simulación para no bloquear la venta local
-            $simulated = true;
-            $idQr = 'SIM_QR_' . uniqid();
-            $qrBase64 = $this->generateSimulatedQrBase64($alias, $amount);
-        }
-
-        // Registrar transacción en la BD
-        $this->saveTransaction($alias, $amount, $proformaId, $idQr, $qrBase64);
-
         return $this->output
-            ->set_status_header(200)
+            ->set_status_header(500)
             ->set_content_type('application/json')
-            ->set_output(json_encode([
-                'status' => 'success',
-                'alias' => $alias,
-                'qr_base64' => $qrBase64,
-                'imagenQr' => $qrBase64,
-                'idQr' => $idQr,
-                'simulated' => $simulated
-            ]));
+            ->set_output(json_encode(['error' => 'No se pudo generar el código QR con el banco']));
     }
 
     /**
@@ -428,46 +346,8 @@ class PasarelaQr extends CI_Controller
                 ]));
         }
 
-        // Consultar configuración bancaria
-        $config = $this->db->get_where('bisa_qr_config', ['id' => 1])->row();
-        if (!$config) {
-            return $this->output
-                ->set_status_header(500)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'Configuración no encontrada']));
-        }
-
-        $token = $this->getAccessToken($config);
-        if (!$token) {
-            return $this->output
-                ->set_status_header(500)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'No se pudo obtener el token de autenticación']));
-        }
-
-        $url = $config->api_url . '/api/v1/estadoTransaccion';
-        $headers = [
-            'Authorization: Bearer ' . $token,
-            'apikeyServicio: ' . $config->service_key,
-            'Content-Type: application/json'
-        ];
-
-        $body = [
-            'alias' => $alias
-        ];
-
-        $response = $this->sendPostRequest($url, $headers, $body);
-        if (!$response) {
-            return $this->output
-                ->set_status_header(500)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'No hubo respuesta del banco al consultar el estado']));
-        }
-
-        $resData = json_decode($response, true);
-        $state = isset($resData['objeto']['estado']) ? strtoupper($resData['objeto']['estado']) : 'PENDIENTE';
-        $idQr = $resData['objeto']['idQr'] ?? null;
-        $numeroOrdenOriginante = $resData['objeto']['numeroOrdenOriginante'] ?? null;
+        // Consultar estado en la pasarela mediante la librería unificada
+        $state = $this->sip_service->checkStatus($alias);
 
         // Sincronizar estado local si el pago se completó en el banco
         if ($state === 'PAGADO') {
@@ -477,8 +357,6 @@ class PasarelaQr extends CI_Controller
             if ($proforma && $proforma->estado !== 'PAGADO') {
                 $this->db->where('idproforma', $alias)->update('proformas', [
                     'estado' => 'PAGADO',
-                    'idQr' => $idQr,
-                    'numeroOrdenOriginante' => $numeroOrdenOriginante,
                     'formapago' => 'qr_bisa',
                     'pago' => $proforma->total,
                     'saldo' => 0
@@ -488,8 +366,6 @@ class PasarelaQr extends CI_Controller
             if ($tx) {
                 $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
                     'estado' => 'PAGADO',
-                    'id_qr' => $idQr ? $idQr : $tx->id_qr,
-                    'numero_orden_originante' => $numeroOrdenOriginante,
                     'fecha_pago' => date('Y-m-d H:i:s')
                 ]);
 
@@ -504,9 +380,7 @@ class PasarelaQr extends CI_Controller
                     'alias' => $alias,
                     'monto' => $proforma ? $proforma->total : 0,
                     'id_proforma' => $proforma ? $proforma->idproforma : null,
-                    'id_qr' => $idQr,
                     'estado' => 'PAGADO',
-                    'numero_orden_originante' => $numeroOrdenOriginante,
                     'fecha_registro' => date('Y-m-d H:i:s'),
                     'fecha_pago' => date('Y-m-d H:i:s')
                 ]);
@@ -524,53 +398,6 @@ class PasarelaQr extends CI_Controller
             ]));
     }
 
-    /**
-     * Obtiene el token de autenticación (JWT) desde la tabla de configuración.
-     * Renueva el token si expiró o está próximo a expirar.
-     */
-    private function getAccessToken($config)
-    {
-        // Validar vigencia del token (más de 60 segundos)
-        if (!empty($config->token) && !empty($config->token_expires_at)) {
-            $expiresAt = strtotime($config->token_expires_at);
-            if ($expiresAt > (time() + 60)) {
-                return $config->token;
-            }
-        }
-
-        $url = $config->api_url . '/autenticacion/v1/generarToken';
-        $headers = [
-            'apikey: ' . $config->api_key,
-            'Content-Type: application/json'
-        ];
-
-        $body = [
-            'username' => $config->username,
-            'password' => $config->password
-        ];
-
-        $response = $this->sendPostRequest($url, $headers, $body);
-        if (!$response) {
-            return null;
-        }
-
-        $data = json_decode($response, true);
-        $token = $data['objeto']['token'] ?? null;
-
-        if ($token) {
-            $validity = isset($data['objeto']['validez']) ? intval($data['objeto']['validez']) : 3600;
-            $expiresAtStr = date('Y-m-d H:i:s', time() + $validity);
-
-            // Guardar token y fecha de expiración
-            $this->db->where('id', $config->id)->update('bisa_qr_config', [
-                'token' => $token,
-                'token_expires_at' => $expiresAtStr,
-                'updated_at' => date('Y-m-d H:i:s')
-            ]);
-        }
-
-        return $token;
-    }
 
     /**
      * Guarda de forma segura o actualiza la transacción en bisa_qr_transacciones.
@@ -726,28 +553,5 @@ class PasarelaQr extends CI_Controller
         exit();
     }
 
-    /**
-     * Realiza una solicitud HTTP POST mediante cURL.
-     */
-    private function sendPostRequest($url, $headers, $body)
-    {
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 4);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
 
-        $response = curl_exec($ch);
-        if ($response === false) {
-            log_message('error', 'PasarelaQr cURL Error: ' . curl_error($ch));
-        } else {
-            log_message('error', 'PasarelaQr cURL Response: ' . $response);
-        }
-        curl_close($ch);
-
-        return $response;
-    }
 }
