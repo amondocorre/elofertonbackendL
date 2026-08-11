@@ -70,6 +70,7 @@ class Caja extends CI_Controller {
                           ->join('ventatransporte vt', 'v.idventa = vt.idventa', 'left')
                           ->where('v.idusr', $usuario_id)
                           ->where('v.fecha >=', $caja->fecha_apertura)
+                          ->where('(v.estado IS NULL OR v.estado != "ANULADO")')
                           ->get()
                           ->result();
 
@@ -337,6 +338,7 @@ class Caja extends CI_Controller {
                               ->where('v.idusr', $c->usuario_id)
                               ->where('DATE(v.fecha) >=', date('Y-m-d', strtotime($c->fecha_apertura)))
                               ->where('DATE(v.fecha) <=', date('Y-m-d', strtotime($fecha_fin)))
+                              ->where('(v.estado IS NULL OR v.estado != "ANULADO")')
                               ->get()
                               ->result();
 

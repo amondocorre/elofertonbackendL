@@ -1158,6 +1158,7 @@ class Ventas extends CI_Controller {
             $this->db->from('ventas v');
             $this->db->join('ventatransporte vt', 'v.idventa = vt.idventa', 'left');
             $this->db->where('v.idneg', $deposito);
+            $this->db->where('(v.estado IS NULL OR v.estado != "ANULADO")');
             if ($caja) {
                 $this->db->where('v.idusr', $caja->usuario_id);
             } else if ($usuario_id) {
