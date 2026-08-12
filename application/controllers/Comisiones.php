@@ -91,9 +91,10 @@ class Comisiones extends MY_Controller {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Falta el ID del vendedor']));
         }
 
-        $this->db->select('dv.id as id_detalle, dv.idprod, i.descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, v.fecha as fecha_venta, v.idventa as numero_venta, v.id as id_venta, dv.pagocomision as fecha_pago');
+        $this->db->select('dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, v.fecha as fecha_venta, v.idventa as numero_venta, v.id as id_venta, v.idproforma as pedido_id, d.nombre as sucursal_nombre, dv.pagocomision as fecha_pago');
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'dv.idventa = v.idventa', 'left');
+        $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
         $this->db->where('dv.vendedor', $vendedor_id);
         $this->db->where('dv.comision >', 0);
