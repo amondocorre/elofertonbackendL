@@ -715,6 +715,53 @@ class Ventas extends CI_Controller {
     }
 
     /**
+     * Actualiza el vendedor de una venta y sus detalles.
+     */
+    public function actualizar_vendedor() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        $idventa = $data['idventa'] ?? null;
+        $vendedor_id = $data['vendedor_id'] ?? null;
+
+        if (empty($idventa) || empty($vendedor_id)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Faltan datos requeridos.']));
+        }
+
+        $this->db->trans_start();
+
+        // Actualizar en ventas
+        $this->db->where('idventa', $idventa);
+        $this->db->update('ventas', ['vendedor' => $vendedor_id]);
+
+        // Actualizar en detalleventas
+        $this->db->where('idventa', $idventa);
+        $this->db->update('detalleventas', ['vendedor' => $vendedor_id]);
+
+        // Actualizar en proformas si corresponde
+        $venta = $this->db->where('idventa', $idventa)->get('ventas')->row();
+        if ($venta && !empty($venta->idproforma)) {
+            $this->db->where('idproforma', $venta->idproforma);
+            $this->db->update('proformas', ['vendedor' => $vendedor_id]);
+        }
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Error al actualizar el vendedor.']));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success']));
+    }
+
+    /**
      * Anula una venta, revierte el stock del inventario y registra la operacion en Kardex.
      */
     public function anular_venta() {

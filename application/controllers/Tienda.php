@@ -555,6 +555,7 @@ class Tienda extends CI_Controller {
         $this->db->join('depositos d', 'p.idneg = d.id', 'left');
         $this->db->join('bisa_qr_transacciones qr', 'p.idproforma = qr.id_proforma', 'left');
         $this->db->where('p.vendedor', $sellerId);
+        $this->db->group_by('p.id');
         $this->db->order_by('p.fecha', 'DESC');
         $proformas = $this->db->get()->result();
 
