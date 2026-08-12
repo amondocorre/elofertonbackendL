@@ -400,7 +400,17 @@ class Tienda extends CI_Controller {
             $idcliente = $this->db->insert_id();
         }
 
-        $isPaid = isset($input_data['estado_pago']) && $input_data['estado_pago'] === 'Pagado';
+        $estado_pago = $input_data['estado_pago'] ?? 'Pendiente';
+
+        // Verificar si hay webhook que llego antes y actualizo la transaccion
+        if (!empty($input_data['qr_alias'])) {
+            $tx = $this->db->where('alias', $input_data['qr_alias'])->get('bisa_qr_transacciones')->row();
+            if ($tx && $tx->estado === 'PAGADO') {
+                $estado_pago = 'Pagado';
+            }
+        }
+
+        $isPaid = $estado_pago === 'Pagado';
         $paidAmount = $isPaid ? $total : 0;
         $remainingBalance = $isPaid ? 0 : $total;
 
@@ -414,7 +424,7 @@ class Tienda extends CI_Controller {
             'telefono' => $telefono,
             'total' => $total,
             'formapago' => $input_data['metodo_pago'] ?? 'efectivo',
-            'estado' => $input_data['estado_pago'] ?? 'Pendiente', 
+            'estado' => $estado_pago, 
             'vendedor' => $input_data['vendedor_id'] ?? 1,
             'idusr' => $input_data['vendedor_id'] ?? 1,
             'idcliente' => $idcliente,
