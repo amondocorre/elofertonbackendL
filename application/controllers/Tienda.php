@@ -23,6 +23,12 @@ class Tienda extends CI_Controller {
      */
     public function productos() {
         $sucursal = $this->input->get('sucursal');
+        if (empty($sucursal) || $sucursal === '0') {
+            $header_sucursal = $this->input->get_request_header('X-Active-Branch', TRUE);
+            if (!empty($header_sucursal)) {
+                $sucursal = $header_sucursal;
+            }
+        }
         $q = $this->input->get('q');
         $marca = $this->input->get('marca');
         $vendedor_id = $this->input->get('vendedor_id');
@@ -47,6 +53,10 @@ class Tienda extends CI_Controller {
                 
                 if (in_array('vendedores', $roles_lower) || in_array('vendedor', $roles_lower) || in_array('admin', $roles_lower) || in_array('administrador', $roles_lower) || in_array('administradores', $roles_lower) || in_array('enc. tienda y caja', $roles_lower) || in_array('encargado de tienda', $roles_lower) || in_array('editor', $roles_lower)) {
                     $is_vendedor = true;
+                    
+                    if ((empty($sucursal) || $sucursal === '0') && !empty($vendedor->ciudad)) {
+                        $sucursal = $vendedor->ciudad;
+                    }
                 }
             }
         }
@@ -511,8 +521,8 @@ class Tienda extends CI_Controller {
      * GET /tienda/listar_proformas_vendedor?vendedor_id=X
      */
     public function listar_proformas_vendedor() {
-        // Expirar proformas pendientes de días anteriores
-        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < CURDATE()");
+        // Expirar proformas pendientes de días anteriores (damos 2 días de vigencia)
+        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < DATE_SUB(CURDATE(), INTERVAL 2 DAY)");
 
         $sellerId = $this->input->get('vendedor_id');
 
