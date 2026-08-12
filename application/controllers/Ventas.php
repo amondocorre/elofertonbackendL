@@ -864,6 +864,12 @@ class Ventas extends CI_Controller {
         }
 
         $vendedorRow = $this->db->select('nombre')->where('id', $proforma->vendedor)->get('vendedores')->row();
+        if (!$vendedorRow && !empty($proforma->idusr)) {
+            $vendedorRow = $this->db->select('nombre')->where('id', $proforma->idusr)->get('vendedores')->row();
+            if ($vendedorRow) {
+                $proforma->vendedor = $proforma->idusr;
+            }
+        }
         $proforma->vendedor_nombre = $vendedorRow ? $vendedorRow->nombre : '';
 
         // Extraer link de google maps y costo del comentario
