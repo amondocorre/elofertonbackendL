@@ -972,4 +972,162 @@ class Inventario extends MY_Controller {
 
         return $this->output->set_output(json_encode(['message' => 'Recepción confirmada con éxito']));
     }
+
+    /**
+     * Genera la información estructurada para reportes de inventario (Excel / PDF).
+     */
+    public function reporte() {
+        $this->check_permission('Inventario', 'ver');
+        $search = $this->input->get('q');
+        $depId = $this->input->get('deposito');
+        $stockFilter = $this->input->get('stock_status'); // 'all', 'disponible', 'agotado', 'bajo'
+
+        // Obtener depósitos
+        $depositos = $this->db->order_by('id', 'ASC')->get('depositos')->result();
+
+        if (empty($depId) || $depId === 'all') {
+            // Caso: Todas las sucursales (pivoteado por sucursal)
+            $this->db->select('
+                p.id,
+                p.idprod,
+                p.descripcion,
+                COALESCE(c.descripcion, p.categoria) AS categoria,
+                COALESCE(m.nombre, p.marca) AS marca,
+                p.precioventa,
+                p.preciolocal
+            ', FALSE);
+            $this->db->from('productos p');
+            $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+            $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+
+            if (!empty($search)) {
+                $search_escaped = $this->db->escape_like_str(trim($search));
+                $this->db->group_start();
+                $this->db->like('p.descripcion', $search_escaped);
+                $this->db->or_like('p.idprod', $search_escaped);
+                $this->db->or_like('m.nombre', $search_escaped);
+                $this->db->or_like('c.descripcion', $search_escaped);
+                $this->db->group_end();
+            }
+
+            $this->db->order_by('p.descripcion', 'ASC');
+            $productos = $this->db->get()->result();
+
+            // Obtener stock agrupado por idprod y deposito desde inventarios
+            $stocks_query = $this->db->select('idprod, deposito, SUM(cantidad) as total_deposito')
+                ->group_by('idprod, deposito')
+                ->get('inventarios')->result();
+
+            $stocks_map = [];
+            foreach ($stocks_query as $s) {
+                if (!isset($stocks_map[$s->idprod])) {
+                    $stocks_map[$s->idprod] = [];
+                }
+                $stocks_map[$s->idprod][$s->deposito] = floatval($s->total_deposito);
+            }
+
+            $reporte_items = [];
+            foreach ($productos as $p) {
+                $branch_stocks = [];
+                $total_prod_stock = 0;
+
+                foreach ($depositos as $d) {
+                    $qty = isset($stocks_map[$p->idprod][$d->id]) ? $stocks_map[$p->idprod][$d->id] : 0;
+                    $branch_stocks[$d->id] = $qty;
+                    $total_prod_stock += $qty;
+                }
+
+                // Filtrar según stockFilter si corresponde
+                if ($stockFilter === 'disponible' && $total_prod_stock <= 0) continue;
+                if ($stockFilter === 'agotado' && $total_prod_stock > 0) continue;
+                if ($stockFilter === 'bajo' && ($total_prod_stock <= 0 || $total_prod_stock > 5)) continue;
+
+                $reporte_items[] = [
+                    'idprod' => $p->idprod,
+                    'descripcion' => $p->descripcion,
+                    'categoria' => $p->categoria ? $p->categoria : '-',
+                    'marca' => $p->marca ? $p->marca : '-',
+                    'precioventa' => floatval($p->precioventa),
+                    'preciolocal' => floatval($p->preciolocal),
+                    'sucursales' => $branch_stocks,
+                    'stock_total' => $total_prod_stock
+                ];
+            }
+
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(200)
+                ->set_output(json_encode([
+                    'modo' => 'todas',
+                    'depositos' => $depositos,
+                    'items' => $reporte_items
+                ]));
+        } else {
+            // Caso: Una sucursal específica
+            $dep_row = $this->db->where('id', intval($depId))->get('depositos')->row();
+            $dep_nombre = $dep_row ? $dep_row->nombre : 'Sucursal ' . $depId;
+
+            $this->db->select('
+                p.idprod,
+                p.descripcion,
+                COALESCE(c.descripcion, p.categoria) AS categoria,
+                COALESCE(m.nombre, p.marca) AS marca,
+                COALESCE(SUM(i.cantidad), 0) AS cantidad,
+                p.precioventa,
+                p.preciolocal
+            ', FALSE);
+            $this->db->from('productos p');
+            $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+            $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+            $this->db->join('inventarios i', 'p.idprod = i.idprod AND i.deposito = ' . intval($depId), 'left', FALSE);
+
+            if (!empty($search)) {
+                $search_escaped = $this->db->escape_like_str(trim($search));
+                $this->db->group_start();
+                $this->db->like('p.descripcion', $search_escaped);
+                $this->db->or_like('p.idprod', $search_escaped);
+                $this->db->group_end();
+            }
+
+            $this->db->group_by('p.idprod, p.descripcion, c.descripcion, m.nombre, p.precioventa, p.preciolocal');
+
+            if ($stockFilter === 'disponible') {
+                $this->db->having('COALESCE(SUM(i.cantidad), 0) >', 0);
+            } elseif ($stockFilter === 'agotado') {
+                $this->db->having('COALESCE(SUM(i.cantidad), 0) <=', 0);
+            } elseif ($stockFilter === 'bajo') {
+                $this->db->having('COALESCE(SUM(i.cantidad), 0) >', 0);
+                $this->db->having('COALESCE(SUM(i.cantidad), 0) <=', 5);
+            }
+
+            $this->db->order_by('p.descripcion', 'ASC');
+            $productos = $this->db->get()->result();
+
+            $reporte_items = [];
+            foreach ($productos as $p) {
+                $qty = floatval($p->cantidad);
+                $pv = floatval($p->precioventa);
+                $reporte_items[] = [
+                    'idprod' => $p->idprod,
+                    'descripcion' => $p->descripcion,
+                    'categoria' => $p->categoria ? $p->categoria : '-',
+                    'marca' => $p->marca ? $p->marca : '-',
+                    'deposito_nombre' => $dep_nombre,
+                    'cantidad' => $qty,
+                    'precioventa' => $pv,
+                    'preciolocal' => floatval($p->preciolocal),
+                    'total_valor' => $qty * $pv
+                ];
+            }
+
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(200)
+                ->set_output(json_encode([
+                    'modo' => 'unica',
+                    'deposito_nombre' => $dep_nombre,
+                    'items' => $reporte_items
+                ]));
+        }
+    }
 }
