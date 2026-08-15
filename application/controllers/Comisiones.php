@@ -26,10 +26,10 @@ class Comisiones extends MY_Controller {
         $this->check_permission('Comisiones', 'ver');
         $estado = $this->input->get('estado') ?: 'pendientes';
         
-        $vendedor_expr = "COALESCE(NULLIF(dv.vendedor, '0'), NULLIF(v_sale.vendedor, '0'), v_sale.idusr)";
+        $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v_sale.vendedor USING utf8mb4), '0'), CONVERT(v_sale.idusr USING utf8mb4))";
 
         // Obtener IDs de vendedores y sus nombres
-        $this->db->select($vendedor_expr . ' as vendedor_id, v.nombre as vendedor_nombre, v.carnet, v.nro_cuenta, v.banco, v.ciudad as sucursal_id, d.nombre as sucursal_nombre, SUM(dv.comision * dv.cuantos) as total_comision, COUNT(dv.id) as cantidad_productos, DATE_FORMAT(MAX(dv.pagocomision), "%d/%m/%Y %H:%i") as fecha_pago', FALSE);
+        $this->db->select($vendedor_expr . ' as vendedor_id, MAX(v.nombre) as vendedor_nombre, MAX(v.carnet) as carnet, MAX(v.nro_cuenta) as nro_cuenta, MAX(v.banco) as banco, MAX(v.ciudad) as sucursal_id, MAX(d.nombre) as sucursal_nombre, SUM(dv.comision * dv.cuantos) as total_comision, COUNT(dv.id) as cantidad_productos, DATE_FORMAT(MAX(dv.pagocomision), "%d/%m/%Y %H:%i") as fecha_pago', FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v_sale', 'dv.idventa = v_sale.idventa', 'left');
         $this->db->join('vendedores v', $vendedor_expr . ' = v.id', 'left', FALSE);
@@ -94,17 +94,17 @@ class Comisiones extends MY_Controller {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Falta el ID del vendedor']));
         }
 
-        $vendedor_expr = "COALESCE(NULLIF(dv.vendedor, '0'), NULLIF(v.vendedor, '0'), v.idusr)";
+        $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
         $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%d/%m/%Y %H:%i') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago", FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'dv.idventa = v.idventa', 'left');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
-        $this->db->where($vendedor_expr . ' = ' . $this->db->escape($vendedor_id), NULL, FALSE);
+        $this->db->where($vendedor_expr . ' = ' . $this->db->escape((string)$vendedor_id), NULL, FALSE);
         $this->db->where('dv.comision >', 0);
 
-        if ($estado === 'pendientes') {
+        if ($estado === 'pendientes' || $estado === 'confirmacion_pendiente') {
             $this->db->where('dv.pagocomision IS NULL');
         } else {
             $this->db->where('dv.pagocomision IS NOT NULL');
