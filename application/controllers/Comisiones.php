@@ -39,6 +39,8 @@ class Comisiones extends MY_Controller {
         $this->db->where('dv.comision >', 0);
         // Excluir a los que tienen recibe_comision = 0
         $this->db->where('(v.recibe_comision IS NULL OR v.recibe_comision = 1)');
+        // Filtrar únicamente a los usuarios que tengan el rol de Vendedor / Vendedores
+        $this->db->where("(TRIM(LOWER(v.rol)) IN ('vendedores', 'vendedor') OR v.id IN (SELECT vendedor_id FROM vendedores_roles WHERE TRIM(LOWER(rol)) IN ('vendedores', 'vendedor')))", NULL, FALSE);
 
         $vendedor_id = $this->input->get('vendedor_id');
         if (!empty($vendedor_id)) {
@@ -270,6 +272,8 @@ class Comisiones extends MY_Controller {
         $this->db->select('id, nombre, ciudad as sucursal_id, recibe_comision');
         $this->db->from('vendedores');
         $this->db->where('estado', 'activo');
+        $this->db->where('(recibe_comision IS NULL OR recibe_comision = 1)');
+        $this->db->where("(TRIM(LOWER(rol)) IN ('vendedores', 'vendedor') OR id IN (SELECT vendedor_id FROM vendedores_roles WHERE TRIM(LOWER(rol)) IN ('vendedores', 'vendedor')))", NULL, FALSE);
         $this->db->order_by('nombre', 'ASC');
         
         $query = $this->db->get();
