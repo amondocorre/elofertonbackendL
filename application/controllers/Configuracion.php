@@ -14,25 +14,33 @@ class Configuracion extends CI_Controller {
         }
     }
 
-    public function migrate_proforma() {
-        $this->db->query("ALTER TABLE configapp ADD COLUMN dias_proforma INT DEFAULT 1");
-        echo "Migration complete";
-    }
-
-    // GET /configuracion/get_config
-    public function get_config() {
+    private function check_and_migrate_columns() {
         if (!$this->db->field_exists('metodo_qrbcp', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN metodo_qrbcp INT DEFAULT 1");
         }
         if (!$this->db->field_exists('pos_metodo_qrbcp', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN pos_metodo_qrbcp INT DEFAULT 1");
         }
+        if (!$this->db->field_exists('dias_proforma', 'configapp')) {
+            $this->db->query("ALTER TABLE configapp ADD COLUMN dias_proforma INT DEFAULT 1");
+        }
+    }
+
+    public function migrate_proforma() {
+        $this->check_and_migrate_columns();
+        echo "Migration complete";
+    }
+
+    // GET /configuracion/get_config
+    public function get_config() {
+        $this->check_and_migrate_columns();
         $config_db = $this->db->get('configapp')->row_array();
         echo json_encode(['status' => 'success', 'data' => $config_db]);
     }
 
     // POST /configuracion/save_config
     public function save_config() {
+        $this->check_and_migrate_columns();
         $input_data = json_decode(file_get_contents('php://input'), true);
         if (!$input_data) {
             echo json_encode(['status' => 'error', 'message' => 'No data provided']);
