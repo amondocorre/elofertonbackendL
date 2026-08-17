@@ -18,7 +18,7 @@ class PasarelaQr extends CI_Controller
 
         // Habilitar CORS para peticiones desde el frontend
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch, X-QR-ENV');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
 
         if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {

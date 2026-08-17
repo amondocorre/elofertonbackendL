@@ -98,9 +98,10 @@ class Comisiones extends MY_Controller {
 
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
-        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%d/%m/%Y %H:%i') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago", FALSE);
+        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%d/%m/%Y %H:%i') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago", FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'dv.idventa = v.idventa', 'left');
+        $this->db->join('proformas prof', 'v.idventa = prof.idproforma OR v.idventa = CAST(prof.id AS CHAR) OR v.id = prof.id', 'left');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
         $this->db->where($vendedor_expr . ' = ' . $this->db->escape((string)$vendedor_id), NULL, FALSE);

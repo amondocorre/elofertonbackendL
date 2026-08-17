@@ -74,7 +74,69 @@ class Ventas extends CI_Controller {
         $this->db->order_by('COALESCE(SUM(i.cantidad), 0) DESC, MAX(p.descripcion) ASC'); // Primero con stock consolidado, luego alfabéticamente
         $this->db->limit(200); // Limite a 200 resultados para visualizar mas productos
         $productos = $this->db->get()->result();
- 
+
+        // Enriquecer productos con promociones vigentes (Regla del Mayor Valor y Descuento Redondeado a Entero)
+        $hoy = date('Y-m-d');
+        $promociones = $this->db->query("
+            SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
+            FROM promociones_descuentos p 
+            LEFT JOIN marcas m ON p.marca_id = m.id 
+            LEFT JOIN categoria_producto c ON p.categoria_id = c.idcategoria 
+            WHERE p.activo = 1 AND p.fecha_inicio <= '$hoy' AND p.fecha_fin >= '$hoy' 
+            ORDER BY p.porcentaje_descuento DESC
+        ")->result_array();
+
+        foreach ($productos as &$prod) {
+            $max_pct = 0;
+            $nombre_promo = '';
+            $comision_val = floatval($prod->comision ?? 0);
+
+            foreach ($promociones as $promo) {
+                $match = false;
+                if ($promo['tipo_filtro'] === 'todos') {
+                    $match = true;
+                } else if ($promo['tipo_filtro'] === 'comision') {
+                    if ($comision_val > 0) {
+                        $match = true;
+                    }
+                } else if ($promo['tipo_filtro'] === 'marca' && !empty($promo['marca_nombre'])) {
+                    if (strtolower(trim($prod->marca ?? '')) === strtolower(trim($promo['marca_nombre']))) {
+                        $match = true;
+                    }
+                } else if ($promo['tipo_filtro'] === 'categoria' && !empty($promo['categoria_nombre'])) {
+                    if (strtolower(trim($prod->categoria ?? '')) === strtolower(trim($promo['categoria_nombre']))) {
+                        $match = true;
+                    }
+                }
+
+                if ($match) {
+                    $pct = intval($promo['porcentaje_descuento']);
+                    if ($pct > $max_pct) {
+                        $max_pct = $pct;
+                        $nombre_promo = $promo['nombre'];
+                    }
+                }
+            }
+
+            if ($max_pct > 0) {
+                $pv_orig = floatval($prod->precioventa);
+                // Descuento redondeado a ENTERO estricto para evitar decimales
+                $monto_descuento = round($pv_orig * ($max_pct / 100.0));
+                $prod->precio_original = $pv_orig;
+                $prod->precioventa = round($pv_orig - $monto_descuento, 2);
+                $prod->descuento_porcentaje = $max_pct;
+                $prod->descuento_monto = intval($monto_descuento);
+                $prod->tiene_promocion = 1;
+                $prod->nombre_promocion = $nombre_promo;
+            } else {
+                $prod->precio_original = floatval($prod->precioventa);
+                $prod->descuento_porcentaje = 0;
+                $prod->descuento_monto = 0;
+                $prod->tiene_promocion = 0;
+                $prod->nombre_promocion = '';
+            }
+        }
+
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode($productos));

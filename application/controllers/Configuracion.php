@@ -21,6 +21,15 @@ class Configuracion extends CI_Controller {
         if (!$this->db->field_exists('pos_metodo_qrbcp', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN pos_metodo_qrbcp INT DEFAULT 1");
         }
+        if (!$this->db->field_exists('pos_metodo_qrmercantil', 'configapp')) {
+            $this->db->query("ALTER TABLE configapp ADD COLUMN pos_metodo_qrmercantil INT DEFAULT 1");
+        }
+        if (!$this->db->field_exists('pos_metodo_cheque', 'configapp')) {
+            $this->db->query("ALTER TABLE configapp ADD COLUMN pos_metodo_cheque INT DEFAULT 1");
+        }
+        if (!$this->db->field_exists('pos_metodo_deposito', 'configapp')) {
+            $this->db->query("ALTER TABLE configapp ADD COLUMN pos_metodo_deposito INT DEFAULT 1");
+        }
         if (!$this->db->field_exists('dias_proforma', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN dias_proforma INT DEFAULT 1");
         }
@@ -55,7 +64,7 @@ class Configuracion extends CI_Controller {
         ];
 
         // POS payment data
-        $pos_fields = ['pos_metodo_efectivo', 'pos_metodo_tarjeta', 'pos_metodo_transferencia', 'pos_metodo_qrbisa', 'pos_metodo_qrbcp', 'pos_metodo_mixto'];
+        $pos_fields = ['pos_metodo_efectivo', 'pos_metodo_tarjeta', 'pos_metodo_transferencia', 'pos_metodo_qrbisa', 'pos_metodo_qrbcp', 'pos_metodo_qrmercantil', 'pos_metodo_cheque', 'pos_metodo_deposito', 'pos_metodo_mixto'];
         foreach ($pos_fields as $field) {
             if (isset($input_data[$field])) {
                 $data[$field] = (int)$input_data[$field];
@@ -84,5 +93,83 @@ class Configuracion extends CI_Controller {
         }
 
         echo json_encode(['status' => 'success', 'message' => 'Configuración actualizada exitosamente']);
+    }
+
+    // GET /configuracion/get_metodos_custom
+    public function get_metodos_custom() {
+        $this->check_and_migrate_columns();
+        $methods = $this->db->order_by('id', 'ASC')->get('metodos_pago_custom')->result_array();
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $methods]));
+    }
+
+    // POST /configuracion/save_metodo_custom
+    public function save_metodo_custom() {
+        $this->check_and_migrate_columns();
+        $input = json_decode(file_get_contents('php://input'), true);
+
+        if (empty($input['nombre'])) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['status' => 'error', 'message' => 'El nombre del método de pago es requerido.']));
+        }
+
+        $data = [
+            'nombre'        => trim($input['nombre']),
+            'descripcion'   => trim($input['descripcion'] ?? ''),
+            'icono'         => trim($input['icono'] ?? '📲'),
+            'activo'        => isset($input['activo']) ? intval($input['activo']) : 1,
+            'permite_mixto' => isset($input['permite_mixto']) ? intval($input['permite_mixto']) : 1,
+        ];
+
+        if (!empty($input['id'])) {
+            $this->db->where('id', intval($input['id']));
+            $this->db->update('metodos_pago_custom', $data);
+            $id = intval($input['id']);
+        } else {
+            $this->db->insert('metodos_pago_custom', $data);
+            $id = $this->db->insert_id();
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'message' => 'Método de pago personalizado guardado.', 'id' => $id]));
+    }
+
+    // POST /configuracion/toggle_metodo_custom
+    public function toggle_metodo_custom() {
+        $this->check_and_migrate_columns();
+        $input = json_decode(file_get_contents('php://input'), true);
+        $id = intval($input['id'] ?? 0);
+        if ($id <= 0) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['status' => 'error', 'message' => 'ID inválido.']));
+        }
+        $method = $this->db->get_where('metodos_pago_custom', ['id' => $id])->row_array();
+        if (!$method) {
+            return $this->output->set_status_header(404)->set_output(json_encode(['status' => 'error', 'message' => 'Método de pago no encontrado.']));
+        }
+        $nuevo_estado = $method['activo'] == 1 ? 0 : 1;
+        $this->db->where('id', $id)->update('metodos_pago_custom', ['activo' => $nuevo_estado]);
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'activo' => $nuevo_estado]));
+    }
+
+    // POST /configuracion/delete_metodo_custom
+    public function delete_metodo_custom() {
+        $this->check_and_migrate_columns();
+        $input = json_decode(file_get_contents('php://input'), true);
+        $id = intval($input['id'] ?? 0);
+        if ($id <= 0) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['status' => 'error', 'message' => 'ID inválido.']));
+        }
+        $this->db->where('id', $id)->delete('metodos_pago_custom');
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'message' => 'Método de pago eliminado.']));
     }
 }
