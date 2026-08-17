@@ -31,7 +31,7 @@ class Comisiones extends MY_Controller {
         // Obtener IDs de vendedores y sus nombres
         $this->db->select($vendedor_expr . ' as vendedor_id, MAX(v.nombre) as vendedor_nombre, MAX(v.carnet) as carnet, MAX(v.nro_cuenta) as nro_cuenta, MAX(v.banco) as banco, MAX(v.ciudad) as sucursal_id, MAX(d.nombre) as sucursal_nombre, SUM(dv.comision * dv.cuantos) as total_comision, COUNT(dv.id) as cantidad_productos, DATE_FORMAT(MAX(dv.pagocomision), "%d/%m/%Y %H:%i") as fecha_pago', FALSE);
         $this->db->from('detalleventas dv');
-        $this->db->join('ventas v_sale', 'dv.idventa = v_sale.idventa', 'left');
+        $this->db->join('ventas v_sale', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v_sale.idventa USING utf8mb4)', 'left', FALSE);
         $this->db->join('vendedores v', $vendedor_expr . ' = v.id', 'left', FALSE);
         $this->db->join('depositos d', 'v.ciudad = d.id', 'left');
         
@@ -100,8 +100,8 @@ class Comisiones extends MY_Controller {
 
         $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%d/%m/%Y %H:%i') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago", FALSE);
         $this->db->from('detalleventas dv');
-        $this->db->join('ventas v', 'dv.idventa = v.idventa', 'left');
-        $this->db->join('proformas prof', 'v.idventa = prof.idproforma OR v.idventa = CAST(prof.id AS CHAR) OR v.id = prof.id', 'left');
+        $this->db->join('ventas v', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)', 'left', FALSE);
+        $this->db->join('proformas prof', 'CONVERT(v.idventa USING utf8mb4) = CONVERT(prof.idproforma USING utf8mb4) OR CONVERT(v.idventa USING utf8mb4) = CONVERT(prof.id USING utf8mb4) OR v.id = prof.id', 'left', FALSE);
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
         $this->db->where($vendedor_expr . ' = ' . $this->db->escape((string)$vendedor_id), NULL, FALSE);
