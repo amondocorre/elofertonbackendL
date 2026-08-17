@@ -144,10 +144,10 @@ class Tienda extends CI_Controller {
         // Enriquecer productos con promociones vigentes aplicables (Regla del Mayor Valor)
         $hoy = date('Y-m-d');
         $promociones = $this->db->query("
-            SELECT p.*, m.nombre as marca_nombre, c.nombre as categoria_nombre 
+            SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
             FROM promociones_descuentos p 
             LEFT JOIN marcas m ON p.marca_id = m.id 
-            LEFT JOIN categorias c ON p.categoria_id = c.id 
+            LEFT JOIN categoria_producto c ON p.categoria_id = c.idcategoria 
             WHERE p.activo = 1 AND p.fecha_inicio <= '$hoy' AND p.fecha_fin >= '$hoy' 
             ORDER BY p.porcentaje_descuento DESC
         ")->result_array();
