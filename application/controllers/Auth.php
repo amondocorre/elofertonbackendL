@@ -8,87 +8,106 @@ class Auth extends MY_Controller {
     }
 
     public function login() {
-        $data = json_decode(file_get_contents('php://input'), true);
-        
-        $email = $data['email'] ?? '';
-        $password = $data['password'] ?? '';
-
-        if (empty($email) || empty($password)) {
-            return $this->output
-                ->set_status_header(400)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'Email y contraseña son requeridos']));
-        }
-
-        $this->db->where('email', $email);
-        $this->db->where('password', $password);
-        $this->db->where('estado', 'activo');
-        $user = $this->db->get('vendedores')->row();
-
-        // Validar contraseña en texto plano (como en el sistema antiguo)
-        if ($user) {
-            // Registrar fecha y hora de último ingreso en fechault
-            $fecha_actual = date('Y-m-d H:i:s');
-            $this->db->where('id', $user->id)->update('vendedores', ['fechault' => $fecha_actual]);
-            $user->fechault = $fecha_actual;
-
-            // Generar un token simple
-            $token = bin2hex(random_bytes(32));
+        try {
+            $data = json_decode(file_get_contents('php://input'), true);
             
-            // Renombrar 'nombre' a 'name' para compatibilidad en el frontend
-            $user->name = $user->nombre;
-            unset($user->password); // No devolver la contraseña
+            $email = $data['email'] ?? '';
+            $password = $data['password'] ?? '';
 
-            // Obtener el ID del rol estructurado o asociar por defecto
-            $rolId = $user->id_rol;
-            if (empty($rolId)) {
-                $roleName = $user->rol;
-                if (stripos($roleName, 'admin') !== false) {
-                    $rolId = 1;
-                } else if (stripos($roleName, 'vend') !== false) {
-                    $rolId = 2;
-                } else if (stripos($roleName, 'enc') !== false || stripos($roleName, 'caja') !== false) {
-                    $rolId = 3;
-                } else {
-                    $rolRow = $this->db->get_where('roles', ['nombre_rol' => $roleName])->row();
-                    $rolId = $rolRow ? $rolRow->id : 2; // Por defecto rol de Vendedor
+            if (empty($email) || empty($password)) {
+                return $this->output
+                    ->set_status_header(400)
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode(['error' => 'Email y contraseña son requeridos']));
+            }
+
+            $this->db->where('email', $email);
+            $this->db->where('password', $password);
+            $this->db->where('estado', 'activo');
+            $user = $this->db->get('vendedores')->row();
+
+            // Validar contraseña en texto plano (como en el sistema antiguo)
+            if ($user) {
+                // Registrar fecha y hora de último ingreso en fechault
+                $fecha_actual = date('Y-m-d H:i:s');
+                if ($this->db->field_exists('fechault', 'vendedores')) {
+                    $this->db->where('id', $user->id)->update('vendedores', ['fechault' => $fecha_actual]);
                 }
+                $user->fechault = $fecha_actual;
+
+                // Generar un token simple
+                $token = bin2hex(random_bytes(32));
                 
-                // Actualizar localmente para el response
-                $user->id_rol = $rolId;
-                $this->db->where('id', $user->id)->update('vendedores', ['id_rol' => $rolId]);
+                // Renombrar 'nombre' a 'name' para compatibilidad en el frontend
+                $user->name = $user->nombre;
+                unset($user->password); // No devolver la contraseña
+
+                // Obtener el ID del rol estructurado o asociar por defecto
+                $rolId = $user->id_rol ?? null;
+                if (empty($rolId)) {
+                    $roleName = $user->rol ?? '';
+                    if (stripos($roleName, 'admin') !== false) {
+                        $rolId = 1;
+                    } else if (stripos($roleName, 'vend') !== false) {
+                        $rolId = 2;
+                    } else if (stripos($roleName, 'enc') !== false || stripos($roleName, 'caja') !== false) {
+                        $rolId = 3;
+                    } else {
+                        $rolRow = $this->db->table_exists('roles') ? $this->db->get_where('roles', ['nombre_rol' => $roleName])->row() : null;
+                        $rolId = $rolRow ? $rolRow->id : 2; // Por defecto rol de Vendedor
+                    }
+                    
+                    // Actualizar localmente para el response si existe la columna id_rol
+                    $user->id_rol = $rolId;
+                    if ($this->db->field_exists('id_rol', 'vendedores')) {
+                        $this->db->where('id', $user->id)->update('vendedores', ['id_rol' => $rolId]);
+                    }
+                }
+
+                // Obtener los múltiples roles
+                $user->roles = [];
+                if ($this->db->table_exists('vendedores_roles')) {
+                    $rolesQuery = $this->db->get_where('vendedores_roles', ['vendedor_id' => $user->id])->result();
+                    $user->roles = array_column($rolesQuery, 'rol');
+                }
+                if (empty($user->roles) && !empty($user->rol)) {
+                    $user->roles = [$user->rol];
+                }
+
+                // Cargar los permisos efectivos del usuario
+                $permissions = $this->get_effective_permissions($user->id, $user->id_rol, 'SISVEN');
+                $menuTree = $this->build_menu_tree($permissions);
+
+                // Cargar las sucursales permitidas
+                $branches = $this->get_allowed_branches($user->id, $user->id_rol, $user->ciudad);
+
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode([
+                        'message' => 'Login exitoso',
+                        'token' => $token,
+                        'user' => $user,
+                        'permissions' => $permissions,
+                        'menu' => $menuTree,
+                        'branches' => $branches
+                    ]));
             }
-
-            // Obtener los múltiples roles
-            $rolesQuery = $this->db->get_where('vendedores_roles', ['vendedor_id' => $user->id])->result();
-            $user->roles = array_column($rolesQuery, 'rol');
-            if (empty($user->roles) && !empty($user->rol)) {
-                $user->roles = [$user->rol];
-            }
-
-            // Cargar los permisos efectivos del usuario
-            $permissions = $this->get_effective_permissions($user->id, $user->id_rol, 'SISVEN');
-            $menuTree = $this->build_menu_tree($permissions);
-
-            // Cargar las sucursales permitidas
-            $branches = $this->get_allowed_branches($user->id, $user->id_rol, $user->ciudad);
 
             return $this->output
+                ->set_status_header(401)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Credenciales inválidas']));
+        } catch (\Throwable $e) {
+            return $this->output
+                ->set_status_header(500)
                 ->set_content_type('application/json')
                 ->set_output(json_encode([
-                    'message' => 'Login exitoso',
-                    'token' => $token,
-                    'user' => $user,
-                    'permissions' => $permissions,
-                    'menu' => $menuTree,
-                    'branches' => $branches
+                    'status' => 'error',
+                    'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
                 ]));
         }
-
-        return $this->output
-            ->set_status_header(401)
-            ->set_content_type('application/json')
-            ->set_output(json_encode(['error' => 'Credenciales inválidas']));
     }
 
     /**
