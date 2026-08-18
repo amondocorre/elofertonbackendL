@@ -90,12 +90,13 @@ class Tienda extends CI_Controller {
             MAX(m.nombre) AS marca,
             MAX(p.idcategoria) AS idcategoria,
             MAX(p.idmarca) AS idmarca,
-            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), \'unid\') AS unidad,
+            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), "unid") AS unidad,
             MAX(p.precioventa) AS precioventa,
+            COALESCE(NULLIF(MAX(inventarios.preciolocal), 0), MAX(p.preciolocal), 0) AS preciolocal,
             MAX(p.nuevoprecio) AS preciomayor,
             COALESCE(MAX(inventarios.deposito), 1) AS sucursal,
             COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
-            NULLIF(MAX(p.imagen), \'\') AS imagen
+            NULLIF(MAX(p.imagen), "") AS imagen
         ';
         
         if ($is_vendedor) {
@@ -143,7 +144,7 @@ class Tienda extends CI_Controller {
         $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
         $productos = $this->db->get()->result();
 
-        // Enriquecer productos con promociones vigentes aplicables (Regla del Mayor Valor)
+        // Enriquecer productos con promociones vigentes aplicables (Regla del Mayor Valor y Protección Financiera)
         $hoy = date('Y-m-d');
         $promociones = $this->db->query("
             SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
@@ -194,6 +195,24 @@ class Tienda extends CI_Controller {
                 }
 
                 if ($match) {
+                    $pct_eval = intval($promo['porcentaje_descuento']);
+                    $costo_compra = floatval($prod->preciolocal ?? 0);
+                    $pv_orig = floatval($prod->precioventa ?? 0);
+                    $comision_val = floatval($prod->comision ?? 0);
+
+                    if ($costo_compra > 0 && $pv_orig > 0) {
+                        $monto_desc_eval = $pv_orig * ($pct_eval / 100.0);
+                        $pv_desc_eval = $pv_orig - $monto_desc_eval;
+                        $neto_eval = $pv_desc_eval - $comision_val;
+
+                        // Excluir de la promoción si genera pérdida financiera
+                        if ($neto_eval <= $costo_compra) {
+                            $match = false;
+                        }
+                    }
+                }
+
+                if ($match) {
                     $pct = intval($promo['porcentaje_descuento']);
                     if ($pct > $max_descuento_porcentaje) {
                         $max_descuento_porcentaje = $pct;
@@ -234,14 +253,23 @@ class Tienda extends CI_Controller {
     public function configuracion() {
         // Obtener sucursales (depósitos) reales de la base de datos
         $this->db->select('id, nombre');
-        $this->db->where('estado', 'activo');
-        // Filtrar por tipo de almacén para no enviar los depósitos
-        $this->db->where('tipo_almacen', 'Sucursal_Venta');
+        if ($this->db->field_exists('estado', 'depositos')) {
+            $this->db->where('LOWER(estado)', 'activo');
+        }
+        if ($this->db->field_exists('tipo_almacen', 'depositos')) {
+            $this->db->where('tipo_almacen', 'Sucursal_Venta');
+        }
         $this->db->order_by('id', 'ASC');
         $sucursales = $this->db->get('depositos')->result_array();
 
         // Configuración de la aplicación
-        $config_db = $this->db->get('configapp')->row_array();
+        $config_db = [];
+        if ($this->db->table_exists('configapp')) {
+            $config_db_row = $this->db->get('configapp')->row_array();
+            if ($config_db_row) {
+                $config_db = $config_db_row;
+            }
+        }
 
         $config = [
             'nrocuenta' => $config_db['nrocuenta'] ?? '1234567890',
@@ -253,7 +281,84 @@ class Tienda extends CI_Controller {
             'metodo_qrmercantil' => $config_db['metodo_qrmercantil'] ?? 1,
             'sucursales' => $sucursales
         ];
-        echo json_encode(['status' => 'success', 'data' => $config]);
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $config]));
+    }
+
+    /**
+     * Obtiene la información completa del perfil del vendedor
+     * GET /tienda/obtener_perfil_vendedor?vendedor_id=X
+     */
+    public function obtener_perfil_vendedor() {
+        $vendedor_id = $this->input->get('vendedor_id');
+        if (empty($vendedor_id)) {
+            return $this->output->set_status_header(400)->set_content_type('application/json')->set_output(json_encode(['error' => 'ID de vendedor requerido']));
+        }
+
+        // Auto-migración columna foto en vendedores
+        if (!$this->db->field_exists('foto', 'vendedores')) {
+            $this->db->query("ALTER TABLE vendedores ADD COLUMN foto VARCHAR(255) NULL AFTER email");
+        }
+
+        $this->db->select("v.*, d.nombre as sucursal_nombre");
+        $this->db->from("vendedores v");
+        $this->db->join("depositos d", "v.ciudad = d.id", "left");
+        $this->db->where("v.id", $vendedor_id);
+        $vendedor = $this->db->get()->row_array();
+
+        if (!$vendedor) {
+            return $this->output->set_status_header(444)->set_content_type('application/json')->set_output(json_encode(['error' => 'Vendedor no encontrado']));
+        }
+
+        unset($vendedor['password']);
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $vendedor]));
+    }
+
+    /**
+     * Subir/Actualizar la foto de perfil del vendedor
+     * POST /tienda/actualizar_foto_vendedor
+     */
+    public function actualizar_foto_vendedor() {
+        $vendedor_id = $this->input->post('vendedor_id');
+        if (empty($vendedor_id)) {
+            return $this->output->set_status_header(400)->set_content_type('application/json')->set_output(json_encode(['error' => 'ID de vendedor requerido']));
+        }
+
+        if (!$this->db->field_exists('foto', 'vendedores')) {
+            $this->db->query("ALTER TABLE vendedores ADD COLUMN foto VARCHAR(255) NULL AFTER email");
+        }
+
+        $upload_path = FCPATH . 'uploads/vendedores/';
+        if (!is_dir($upload_path)) {
+            mkdir($upload_path, 0777, true);
+        }
+
+        if (empty($_FILES['foto']['name'])) {
+            return $this->output->set_status_header(400)->set_content_type('application/json')->set_output(json_encode(['error' => 'No se adjuntó ningún archivo de imagen']));
+        }
+
+        $ext = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+        $filename = 'vendedor_' . $vendedor_id . '_' . time() . '.' . $ext;
+        $target_file = $upload_path . $filename;
+
+        if (move_uploaded_file($_FILES['foto']['tmp_name'], $target_file)) {
+            $this->db->where('id', $vendedor_id);
+            $this->db->update('vendedores', ['foto' => $filename]);
+
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'message' => 'Foto de perfil actualizada exitosamente',
+                    'foto' => $filename
+                ]));
+        } else {
+            return $this->output->set_status_header(500)->set_content_type('application/json')->set_output(json_encode(['error' => 'No se pudo guardar la foto en el servidor']));
+        }
     }
 
     /**

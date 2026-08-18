@@ -57,6 +57,7 @@ class Ventas extends CI_Controller {
             MAX(p.idcategoria) AS idcategoria,
             MAX(p.unidad) AS unidad,
             ' . $precioSelect . ' AS precioventa,
+            COALESCE(NULLIF(MAX(i.preciolocal), 0), MAX(p.preciolocal), 0) AS preciolocal,
             COALESCE(SUM(i.cantidad), 0) AS cantidad,
             COALESCE(MAX(p.comision), 0) AS comision,
             \'' . intval($dep) . '\' AS deposito,
@@ -77,7 +78,7 @@ class Ventas extends CI_Controller {
         $this->db->limit(200); // Limite a 200 resultados para visualizar mas productos
         $productos = $this->db->get()->result();
 
-        // Enriquecer productos con promociones vigentes (Regla del Mayor Valor y Descuento Redondeado a Entero)
+        // Enriquecer productos con promociones vigentes (Regla del Mayor Valor y Protección Financiera)
         $hoy = date('Y-m-d');
         $promociones = $this->db->query("
             SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
@@ -92,6 +93,8 @@ class Ventas extends CI_Controller {
             $max_pct = 0;
             $nombre_promo = '';
             $comision_val = floatval($prod->comision ?? 0);
+            $costo_compra = floatval($prod->preciolocal ?? 0);
+            $pv_orig_base = floatval($prod->precioventa ?? 0);
 
             foreach ($promociones as $promo) {
                 $match = false;
@@ -126,6 +129,20 @@ class Ventas extends CI_Controller {
                         $match = true;
                     } else if (!empty($promo['categoria_nombre']) && strtolower(trim($prod->categoria ?? '')) === strtolower(trim($promo['categoria_nombre']))) {
                         $match = true;
+                    }
+                }
+
+                if ($match) {
+                    $pct_eval = intval($promo['porcentaje_descuento']);
+                    if ($costo_compra > 0 && $pv_orig_base > 0) {
+                        $monto_desc_eval = $pv_orig_base * ($pct_eval / 100.0);
+                        $pv_desc_eval = $pv_orig_base - $monto_desc_eval;
+                        $neto_eval = $pv_desc_eval - $comision_val;
+
+                        // Excluir de la promoción si genera pérdida financiera
+                        if ($neto_eval <= $costo_compra) {
+                            $match = false;
+                        }
                     }
                 }
 
