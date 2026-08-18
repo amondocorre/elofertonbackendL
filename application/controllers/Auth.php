@@ -21,7 +21,20 @@ class Auth extends MY_Controller {
                     ->set_output(json_encode(['error' => 'Email y contraseña son requeridos']));
             }
 
-            $this->db->where('email', $email);
+            $login_input = trim($email);
+            $this->db->group_start();
+            $this->db->where('email', $login_input);
+            if ($this->db->field_exists('telefono', 'vendedores')) {
+                $this->db->or_where('telefono', $login_input);
+            }
+            if ($this->db->field_exists('ci', 'vendedores')) {
+                $this->db->or_where('ci', $login_input);
+            }
+            if ($this->db->field_exists('usuario', 'vendedores')) {
+                $this->db->or_where('usuario', $login_input);
+            }
+            $this->db->group_end();
+
             $this->db->where('password', $password);
             $this->db->where('estado', 'activo');
             $user = $this->db->get('vendedores')->row();
