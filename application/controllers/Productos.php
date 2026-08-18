@@ -203,6 +203,31 @@ class Productos extends MY_Controller {
             }
         }
 
+        // Si es únicamente subida de imagen, actualizar directo sin validar duplicados ni modificar datos maestros
+        if ($only_image) {
+            $master_prod = null;
+            if ($id) {
+                $master_prod = $this->db->where('id', $id)->get('productos')->row();
+            }
+            if (!$master_prod && !empty($idprod)) {
+                $master_prod = $this->db->where('idprod', $idprod)->get('productos')->row();
+            }
+            if ($master_prod) {
+                $this->db->where('id', $master_prod->id)->update('productos', ['imagen' => $imagen]);
+                if (!empty($master_prod->idprod)) {
+                    $this->db->where('idprod', $master_prod->idprod)->update('inventarios', ['imagenes' => $imagen]);
+                }
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode(['status' => 'success', 'message' => 'Imagen actualizada correctamente.']));
+            } else {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(404)
+                    ->set_output(json_encode(['error' => 'No se encontró el producto especificado.']));
+            }
+        }
+
         // Validar código duplicado
         $this->db->where('idprod', $idprod);
         if ($id) {

@@ -8,11 +8,24 @@ class Descuentos extends MY_Controller {
     public function __construct() {
         parent::__construct();
         $this->load->database();
+        $this->check_db_schema();
         header('Access-Control-Allow-Origin: *');
         header('Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, X-User-Id, X-Rol-Id, X-Active-Branch, Authorization');
         header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
         if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
             die();
+        }
+    }
+
+    /**
+     * Auto-migración para agregar las columnas comision_minima y productos_ids a promociones_descuentos
+     */
+    private function check_db_schema() {
+        if (!$this->db->field_exists('comision_minima', 'promociones_descuentos')) {
+            $this->db->query("ALTER TABLE promociones_descuentos ADD COLUMN comision_minima DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER categoria_id");
+        }
+        if (!$this->db->field_exists('productos_ids', 'promociones_descuentos')) {
+            $this->db->query("ALTER TABLE promociones_descuentos ADD COLUMN productos_ids TEXT NULL AFTER comision_minima");
         }
     }
 
@@ -59,8 +72,71 @@ class Descuentos extends MY_Controller {
     }
 
     /**
+     * Listado de Marcas para los selectores de promociones
+     */
+    public function listar_marcas() {
+        $query = $this->db->select("id, nombre")
+            ->order_by('nombre', 'ASC')
+            ->get('marcas');
+        $res = $query->result_array();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $res]));
+    }
+
+    /**
+     * Buscar productos por nombre o código para selección específica en promociones
+     */
+    public function buscar_productos() {
+        $q = $this->input->get('q');
+        $this->db->select('p.id, p.idprod, p.descripcion, m.nombre as marca, c.descripcion as categoria, p.precioventa, p.comision');
+        $this->db->from('productos p');
+        $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+        $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+        $this->db->where('p.estado', 'Activo');
+
+        if (!empty($q)) {
+            $search_escaped = $this->db->escape_like_str(trim($q));
+            $this->db->group_start();
+            $this->db->like('p.descripcion', $search_escaped);
+            $this->db->or_like('p.idprod', $search_escaped);
+            $this->db->or_like('m.nombre', $search_escaped);
+            $this->db->group_end();
+        }
+
+        $this->db->limit(30);
+        $res = $this->db->get()->result_array();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $res]));
+    }
+
+    /**
+     * Obtiene detalles de productos a partir de una lista de IDs/códigos
+     */
+    public function obtener_detalles_productos() {
+        $ids = json_decode(file_get_contents('php://input'), true);
+        if (empty($ids) || !is_array($ids)) {
+            return $this->output->set_content_type('application/json')->set_output(json_encode(['status' => 'success', 'data' => []]));
+        }
+
+        $this->db->select('p.id, p.idprod, p.descripcion, m.nombre as marca, c.descripcion as categoria, p.precioventa, p.comision');
+        $this->db->from('productos p');
+        $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+        $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+        $this->db->where_in('p.idprod', $ids);
+        $res = $this->db->get()->result_array();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $res]));
+    }
+
+    /**
      * Simulación de Alerta de Rentabilidad (Pérdida Financiera)
-     * Evalúa los productos afectados según filtro (Marca / Categoría / Todos)
+     * Evalúa los productos afectados según filtro (Marca / Categoría / Comisión / Productos Específicos / Todos)
      */
     public function simular_alerta() {
         $this->check_permission('Descuentos', 'ver');
@@ -69,7 +145,22 @@ class Descuentos extends MY_Controller {
         $tipo_filtro = $data['tipo_filtro'] ?? 'todos';
         $marca_id = !empty($data['marca_id']) ? intval($data['marca_id']) : null;
         $categoria_id = !empty($data['categoria_id']) ? intval($data['categoria_id']) : null;
+        $comision_minima = floatval($data['comision_minima'] ?? 0);
         $porcentaje = intval($data['porcentaje_descuento'] ?? 0);
+
+        $productos_ids = [];
+        if (!empty($data['productos_ids'])) {
+            if (is_array($data['productos_ids'])) {
+                $productos_ids = array_map('strval', $data['productos_ids']);
+            } else if (is_string($data['productos_ids'])) {
+                $decoded = json_decode($data['productos_ids'], true);
+                if (is_array($decoded)) {
+                    $productos_ids = array_map('strval', $decoded);
+                } else {
+                    $productos_ids = array_map('trim', explode(',', $data['productos_ids']));
+                }
+            }
+        }
 
         if ($porcentaje <= 0) {
             return $this->output
@@ -92,17 +183,53 @@ class Descuentos extends MY_Controller {
             }
         }
 
-        $this->db->select("p.id, p.idprod, p.descripcion, p.marca, p.categoria, p.preciolocal as costo_compra, p.precioventa as precio_venta, p.comision", FALSE);
-        $this->db->from('inventarios p');
+        $this->db->select("
+            MAX(p.id) as id, 
+            p.idprod, 
+            MAX(p.descripcion) as descripcion, 
+            MAX(p.idmarca) as idmarca,
+            MAX(p.idcategoria) as idcategoria,
+            MAX(m.nombre) as marca, 
+            MAX(c.descripcion) as categoria, 
+            COALESCE(NULLIF(MAX(i.preciolocal), 0), MAX(p.preciolocal), 0) as costo_compra, 
+            COALESCE(NULLIF(MAX(p.precioventa), 0), MAX(i.precioventa), 0) as precio_venta, 
+            COALESCE(MAX(p.comision), 0) as comision
+        ", FALSE);
+        $this->db->from('productos p');
+        $this->db->join('inventarios i', 'p.idprod = i.idprod', 'left');
+        $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+        $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+        $this->db->where('p.estado', 'Activo');
 
-        if ($filter_marca_name) {
-            $this->db->where('LOWER(TRIM(p.marca))', $filter_marca_name);
-        } else if ($filter_cat_name) {
-            $this->db->where('LOWER(TRIM(p.categoria))', $filter_cat_name);
+        if ($tipo_filtro === 'marca' && ($marca_id || $filter_marca_name)) {
+            $this->db->group_start();
+            if ($marca_id) {
+                $this->db->where('p.idmarca', $marca_id);
+            }
+            if ($filter_marca_name) {
+                $this->db->or_where('LOWER(TRIM(m.nombre))', $filter_marca_name);
+            }
+            $this->db->group_end();
+        } else if ($tipo_filtro === 'categoria' && ($categoria_id || $filter_cat_name)) {
+            $this->db->group_start();
+            if ($categoria_id) {
+                $this->db->where('p.idcategoria', $categoria_id);
+            }
+            if ($filter_cat_name) {
+                $this->db->or_where('LOWER(TRIM(c.descripcion))', $filter_cat_name);
+            }
+            $this->db->group_end();
         } else if ($tipo_filtro === 'comision') {
-            $this->db->where('p.comision >', 0);
+            if ($comision_minima > 0) {
+                $this->db->where('COALESCE(p.comision, 0) >=', $comision_minima);
+            } else {
+                $this->db->where('COALESCE(p.comision, 0) >', 0);
+            }
+        } else if ($tipo_filtro === 'productos' && !empty($productos_ids)) {
+            $this->db->where_in('p.idprod', $productos_ids);
         }
 
+        $this->db->group_by('p.idprod');
         $query = $this->db->get();
         $productos = $query->result_array();
 
@@ -164,8 +291,24 @@ class Descuentos extends MY_Controller {
                 ->set_output(json_encode(['status' => 'success', 'data' => []]));
         }
 
-        $productos = $this->db->select("p.id, p.idprod, p.descripcion, p.marca, p.categoria, p.preciolocal as costo_compra, p.precioventa as precio_venta, p.comision", FALSE)
-            ->from('inventarios p')
+        $productos = $this->db->select("
+            MAX(p.id) as id, 
+            p.idprod, 
+            MAX(p.descripcion) as descripcion, 
+            MAX(p.idmarca) as idmarca,
+            MAX(p.idcategoria) as idcategoria,
+            MAX(m.nombre) as marca, 
+            MAX(c.descripcion) as categoria, 
+            COALESCE(NULLIF(MAX(i.preciolocal), 0), MAX(p.preciolocal), 0) as costo_compra, 
+            COALESCE(NULLIF(MAX(p.precioventa), 0), MAX(i.precioventa), 0) as precio_venta, 
+            COALESCE(MAX(p.comision), 0) as comision
+        ", FALSE)
+            ->from('productos p')
+            ->join('inventarios i', 'p.idprod = i.idprod', 'left')
+            ->join('marcas m', 'p.idmarca = m.id', 'left')
+            ->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left')
+            ->where('p.estado', 'Activo')
+            ->group_by('p.idprod')
             ->get()->result_array();
 
         $riesgos = [];
@@ -182,15 +325,33 @@ class Descuentos extends MY_Controller {
                 if ($promo['tipo_filtro'] === 'todos') {
                     $match = true;
                 } else if ($promo['tipo_filtro'] === 'comision') {
-                    if ($comision > 0) {
+                    $min_com = floatval($promo['comision_minima'] ?? 0);
+                    if ($min_com > 0) {
+                        if ($comision >= $min_com) {
+                            $match = true;
+                        }
+                    } else if ($comision > 0) {
                         $match = true;
                     }
-                } else if ($promo['tipo_filtro'] === 'marca' && !empty($promo['marca_nombre'])) {
-                    if (strtolower(trim($prod['marca'] ?? '')) === strtolower(trim($promo['marca_nombre']))) {
+                } else if ($promo['tipo_filtro'] === 'productos' && !empty($promo['productos_ids'])) {
+                    $prod_list = json_decode($promo['productos_ids'], true);
+                    if (!is_array($prod_list)) {
+                        $prod_list = array_map('trim', explode(',', $promo['productos_ids']));
+                    }
+                    $prod_list_str = array_map('strval', $prod_list);
+                    if (in_array((string)$prod['idprod'], $prod_list_str) || in_array((string)$prod['id'], $prod_list_str)) {
                         $match = true;
                     }
-                } else if ($promo['tipo_filtro'] === 'categoria' && !empty($promo['categoria_nombre'])) {
-                    if (strtolower(trim($prod['categoria'] ?? '')) === strtolower(trim($promo['categoria_nombre']))) {
+                } else if ($promo['tipo_filtro'] === 'marca') {
+                    if (!empty($promo['marca_id']) && !empty($prod['idmarca']) && (int)$promo['marca_id'] === (int)$prod['idmarca']) {
+                        $match = true;
+                    } else if (!empty($promo['marca_nombre']) && strtolower(trim($prod['marca'] ?? '')) === strtolower(trim($promo['marca_nombre']))) {
+                        $match = true;
+                    }
+                } else if ($promo['tipo_filtro'] === 'categoria') {
+                    if (!empty($promo['categoria_id']) && !empty($prod['idcategoria']) && (int)$promo['categoria_id'] === (int)$prod['idcategoria']) {
+                        $match = true;
+                    } else if (!empty($promo['categoria_nombre']) && strtolower(trim($prod['categoria'] ?? '')) === strtolower(trim($promo['categoria_nombre']))) {
                         $match = true;
                     }
                 }
@@ -253,12 +414,24 @@ class Descuentos extends MY_Controller {
 
         $id = !empty($data['id']) ? intval($data['id']) : null;
         $porcentaje = max(1, intval($data['porcentaje_descuento'] ?? 0));
+        $comision_minima = isset($data['comision_minima']) ? floatval($data['comision_minima']) : 0;
+
+        $productos_ids = null;
+        if (!empty($data['productos_ids'])) {
+            if (is_array($data['productos_ids'])) {
+                $productos_ids = json_encode(array_values($data['productos_ids']));
+            } else {
+                $productos_ids = trim($data['productos_ids']);
+            }
+        }
 
         $save_data = [
             'nombre' => trim($data['nombre']),
             'tipo_filtro' => $data['tipo_filtro'] ?? 'todos',
             'marca_id' => !empty($data['marca_id']) ? intval($data['marca_id']) : null,
             'categoria_id' => !empty($data['categoria_id']) ? intval($data['categoria_id']) : null,
+            'comision_minima' => $comision_minima,
+            'productos_ids' => $productos_ids,
             'porcentaje_descuento' => $porcentaje,
             'fecha_inicio' => $data['fecha_inicio'],
             'fecha_fin' => $data['fecha_fin'],

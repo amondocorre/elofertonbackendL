@@ -88,6 +88,8 @@ class Tienda extends CI_Controller {
             MAX(p.descripcion) AS descripcion,
             MAX(c.descripcion) AS categoria,
             MAX(m.nombre) AS marca,
+            MAX(p.idcategoria) AS idcategoria,
+            MAX(p.idmarca) AS idmarca,
             COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), \'unid\') AS unidad,
             MAX(p.precioventa) AS precioventa,
             MAX(p.nuevoprecio) AS preciomayor,
@@ -160,15 +162,33 @@ class Tienda extends CI_Controller {
                 if ($promo['tipo_filtro'] === 'todos') {
                     $match = true;
                 } else if ($promo['tipo_filtro'] === 'comision') {
-                    if (floatval($prod->comision ?? 0) > 0) {
+                    $min_com = floatval($promo['comision_minima'] ?? 0);
+                    if ($min_com > 0) {
+                        if (floatval($prod->comision ?? 0) >= $min_com) {
+                            $match = true;
+                        }
+                    } else if (floatval($prod->comision ?? 0) > 0) {
                         $match = true;
                     }
-                } else if ($promo['tipo_filtro'] === 'marca' && !empty($promo['marca_nombre'])) {
-                    if (strtolower(trim($prod->marca ?? '')) === strtolower(trim($promo['marca_nombre']))) {
+                } else if ($promo['tipo_filtro'] === 'productos' && !empty($promo['productos_ids'])) {
+                    $prod_list = json_decode($promo['productos_ids'], true);
+                    if (!is_array($prod_list)) {
+                        $prod_list = array_map('trim', explode(',', $promo['productos_ids']));
+                    }
+                    $prod_list_str = array_map('strval', $prod_list);
+                    if (in_array((string)($prod->idprod ?? ''), $prod_list_str) || in_array((string)($prod->id ?? ''), $prod_list_str)) {
                         $match = true;
                     }
-                } else if ($promo['tipo_filtro'] === 'categoria' && !empty($promo['categoria_nombre'])) {
-                    if (strtolower(trim($prod->categoria ?? '')) === strtolower(trim($promo['categoria_nombre']))) {
+                } else if ($promo['tipo_filtro'] === 'marca') {
+                    if (!empty($promo['marca_id']) && !empty($prod->idmarca) && (int)$promo['marca_id'] === (int)$prod->idmarca) {
+                        $match = true;
+                    } else if (!empty($promo['marca_nombre']) && strtolower(trim($prod->marca ?? '')) === strtolower(trim($promo['marca_nombre']))) {
+                        $match = true;
+                    }
+                } else if ($promo['tipo_filtro'] === 'categoria') {
+                    if (!empty($promo['categoria_id']) && !empty($prod->idcategoria) && (int)$promo['categoria_id'] === (int)$prod->idcategoria) {
+                        $match = true;
+                    } else if (!empty($promo['categoria_nombre']) && strtolower(trim($prod->categoria ?? '')) === strtolower(trim($promo['categoria_nombre']))) {
                         $match = true;
                     }
                 }

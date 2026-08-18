@@ -26,11 +26,11 @@ class Inventario extends MY_Controller {
         $this->db->select('
             MAX(inventarios.id) AS id,
             p.idprod,
-            p.descripcion AS descripcion,
-            COALESCE(MAX(inventarios.categoria), p.categoria) AS categoria,
-            COALESCE(MAX(inventarios.marca), p.marca) AS marca,
-            MAX(inventarios.unidad) AS unidad,
-            MAX(inventarios.proveedor) AS proveedor,
+            MAX(p.descripcion) AS descripcion,
+            COALESCE(MAX(inventarios.categoria), MAX(p.categoria)) AS categoria,
+            COALESCE(MAX(inventarios.marca), MAX(p.marca)) AS marca,
+            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), "unid") AS unidad,
+            COALESCE(MAX(prov.nombre), MAX(inventarios.proveedor), MAX(p.proveedor), "No especificado") AS proveedor,
             COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
             MAX(p.precioventa) AS precioventa,
             MAX(p.preciolocal) AS preciolocal,
@@ -47,6 +47,7 @@ class Inventario extends MY_Controller {
         }
         $this->db->join('inventarios', $join_condition, 'left', FALSE);
         $this->db->join('depositos', 'inventarios.deposito = depositos.id', 'left');
+        $this->db->join('proveedores prov', 'p.proveedor = prov.id', 'left');
 
         if (!empty($search)) {
             $search_escaped = $this->db->escape_like_str(trim($search));
