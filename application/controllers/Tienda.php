@@ -144,125 +144,142 @@ class Tienda extends CI_Controller {
         $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
         $productos = $this->db->get()->result();
 
-        // Enriquecer productos con promociones vigentes aplicables (Regla del Mayor Valor y Protección Financiera)
-        $promociones = $this->db->query("
-            SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
-            FROM promociones_descuentos p 
-            LEFT JOIN marcas m ON p.marca_id = m.id 
-            LEFT JOIN categoria_producto c ON p.categoria_id = c.idcategoria 
-            WHERE p.activo = 1 AND DATE(p.fecha_inicio) <= CURDATE() AND DATE(p.fecha_fin) >= CURDATE() 
-            ORDER BY p.porcentaje_descuento DESC
-        ")->result_array();
-
-        // Mapeos auxiliares de marcas y categorías por ID
-        $marcas_by_id = [];
-        $cats_by_id = [];
-        foreach ($promociones as $pr) {
-            if (!empty($pr['marca_id']) && empty($marcas_by_id[$pr['marca_id']])) {
-                $mrow = $this->db->get_where('marcas', ['id' => $pr['marca_id']])->row();
-                if ($mrow) $marcas_by_id[$pr['marca_id']] = strtolower(trim($mrow->nombre));
+        try {
+            // Enriquecer productos con promociones vigentes aplicables (Regla del Mayor Valor y Protección Financiera)
+            $promociones = [];
+            if ($this->db->table_exists('promociones_descuentos')) {
+                $promociones = $this->db->query("
+                    SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
+                    FROM promociones_descuentos p 
+                    LEFT JOIN marcas m ON p.marca_id = m.id 
+                    LEFT JOIN categoria_producto c ON p.categoria_id = c.idcategoria 
+                    WHERE p.activo = 1 AND DATE(p.fecha_inicio) <= CURDATE() AND DATE(p.fecha_fin) >= CURDATE() 
+                    ORDER BY p.porcentaje_descuento DESC
+                ")->result_array();
             }
-            if (!empty($pr['categoria_id']) && empty($cats_by_id[$pr['categoria_id']])) {
-                $crow = $this->db->get_where('categoria_producto', ['idcategoria' => $pr['categoria_id']])->row();
-                if ($crow) $cats_by_id[$pr['categoria_id']] = strtolower(trim($crow->descripcion));
-            }
-        }
 
-        foreach ($productos as &$prod) {
-            $max_descuento_porcentaje = 0;
-            $nombre_promo = '';
-            foreach ($promociones as $promo) {
-                $match = false;
-                if ($promo['tipo_filtro'] === 'todos') {
-                    $match = true;
-                } else if ($promo['tipo_filtro'] === 'comision') {
-                    $min_com = floatval($promo['comision_minima'] ?? 0);
-                    if ($min_com > 0) {
-                        if (floatval($prod->comision ?? 0) >= $min_com) {
+            // Mapeos auxiliares de marcas y categorías por ID
+            $marcas_by_id = [];
+            $cats_by_id = [];
+            foreach ($promociones as $pr) {
+                if (!empty($pr['marca_id']) && empty($marcas_by_id[$pr['marca_id']])) {
+                    $mrow = $this->db->get_where('marcas', ['id' => $pr['marca_id']])->row();
+                    if ($mrow) $marcas_by_id[$pr['marca_id']] = strtolower(trim($mrow->nombre));
+                }
+                if (!empty($pr['categoria_id']) && empty($cats_by_id[$pr['categoria_id']])) {
+                    $crow = $this->db->get_where('categoria_producto', ['idcategoria' => $pr['categoria_id']])->row();
+                    if ($crow) $cats_by_id[$pr['categoria_id']] = strtolower(trim($crow->descripcion));
+                }
+            }
+
+            foreach ($productos as &$prod) {
+                $max_descuento_porcentaje = 0;
+                $nombre_promo = '';
+                foreach ($promociones as $promo) {
+                    $match = false;
+                    if ($promo['tipo_filtro'] === 'todos') {
+                        $match = true;
+                    } else if ($promo['tipo_filtro'] === 'comision') {
+                        $min_com = floatval($promo['comision_minima'] ?? 0);
+                        if ($min_com > 0) {
+                            if (floatval($prod->comision ?? 0) >= $min_com) {
+                                $match = true;
+                            }
+                        } else if (floatval($prod->comision ?? 0) > 0) {
                             $match = true;
                         }
-                    } else if (floatval($prod->comision ?? 0) > 0) {
-                        $match = true;
+                    } else if ($promo['tipo_filtro'] === 'productos' && !empty($promo['productos_ids'])) {
+                        $prod_list = json_decode($promo['productos_ids'], true);
+                        if (!is_array($prod_list)) {
+                            $prod_list = array_map('trim', explode(',', $promo['productos_ids']));
+                        }
+                        $prod_list_str = array_map('strval', $prod_list);
+                        if (in_array((string)($prod->idprod ?? ''), $prod_list_str) || in_array((string)($prod->id ?? ''), $prod_list_str)) {
+                            $match = true;
+                        }
+                    } else if ($promo['tipo_filtro'] === 'marca') {
+                        $prod_marca_str = strtolower(trim($prod->marca ?? ''));
+                        if (!empty($promo['marca_id']) && !empty($prod->idmarca) && (int)$promo['marca_id'] === (int)$prod->idmarca) {
+                            $match = true;
+                        } else if (!empty($promo['marca_nombre']) && $prod_marca_str === strtolower(trim($promo['marca_nombre']))) {
+                            $match = true;
+                        } else if (!empty($promo['marca_id']) && isset($marcas_by_id[$promo['marca_id']]) && $prod_marca_str === $marcas_by_id[$promo['marca_id']]) {
+                            $match = true;
+                        }
+                    } else if ($promo['tipo_filtro'] === 'categoria') {
+                        $prod_cat_str = strtolower(trim($prod->categoria ?? ''));
+                        if (!empty($promo['categoria_id']) && !empty($prod->idcategoria) && (int)$promo['categoria_id'] === (int)$prod->idcategoria) {
+                            $match = true;
+                        } else if (!empty($promo['categoria_nombre']) && $prod_cat_str === strtolower(trim($promo['categoria_nombre']))) {
+                            $match = true;
+                        } else if (!empty($promo['categoria_id']) && isset($cats_by_id[$promo['categoria_id']]) && $prod_cat_str === $cats_by_id[$promo['categoria_id']]) {
+                            $match = true;
+                        }
                     }
-                } else if ($promo['tipo_filtro'] === 'productos' && !empty($promo['productos_ids'])) {
-                    $prod_list = json_decode($promo['productos_ids'], true);
-                    if (!is_array($prod_list)) {
-                        $prod_list = array_map('trim', explode(',', $promo['productos_ids']));
-                    }
-                    $prod_list_str = array_map('strval', $prod_list);
-                    if (in_array((string)($prod->idprod ?? ''), $prod_list_str) || in_array((string)($prod->id ?? ''), $prod_list_str)) {
-                        $match = true;
-                    }
-                } else if ($promo['tipo_filtro'] === 'marca') {
-                    $prod_marca_str = strtolower(trim($prod->marca ?? ''));
-                    if (!empty($promo['marca_id']) && !empty($prod->idmarca) && (int)$promo['marca_id'] === (int)$prod->idmarca) {
-                        $match = true;
-                    } else if (!empty($promo['marca_nombre']) && $prod_marca_str === strtolower(trim($promo['marca_nombre']))) {
-                        $match = true;
-                    } else if (!empty($promo['marca_id']) && isset($marcas_by_id[$promo['marca_id']]) && $prod_marca_str === $marcas_by_id[$promo['marca_id']]) {
-                        $match = true;
-                    }
-                } else if ($promo['tipo_filtro'] === 'categoria') {
-                    $prod_cat_str = strtolower(trim($prod->categoria ?? ''));
-                    if (!empty($promo['categoria_id']) && !empty($prod->idcategoria) && (int)$promo['categoria_id'] === (int)$prod->idcategoria) {
-                        $match = true;
-                    } else if (!empty($promo['categoria_nombre']) && $prod_cat_str === strtolower(trim($promo['categoria_nombre']))) {
-                        $match = true;
-                    } else if (!empty($promo['categoria_id']) && isset($cats_by_id[$promo['categoria_id']]) && $prod_cat_str === $cats_by_id[$promo['categoria_id']]) {
-                        $match = true;
-                    }
-                }
 
-                if ($match) {
-                    $pct_eval = intval($promo['porcentaje_descuento']);
-                    $costo_compra = floatval($prod->preciolocal ?? 0);
-                    $pv_orig = floatval($prod->precioventa ?? 0);
-                    $comision_val = floatval($prod->comision ?? 0);
+                    if ($match) {
+                        $pct_eval = intval($promo['porcentaje_descuento']);
+                        $costo_compra = floatval($prod->preciolocal ?? 0);
+                        $pv_orig = floatval($prod->precioventa ?? 0);
+                        $comision_val = floatval($prod->comision ?? 0);
 
-                    if ($costo_compra > 0 && $pv_orig > 0) {
-                        $monto_desc_eval = $pv_orig * ($pct_eval / 100.0);
-                        $pv_desc_eval = $pv_orig - $monto_desc_eval;
-                        $neto_eval = $pv_desc_eval - $comision_val;
+                        if ($costo_compra > 0 && $pv_orig > 0) {
+                            $monto_desc_eval = $pv_orig * ($pct_eval / 100.0);
+                            $pv_desc_eval = $pv_orig - $monto_desc_eval;
+                            $neto_eval = $pv_desc_eval - $comision_val;
 
-                        // Excluir de la promoción si genera pérdida financiera
-                        if ($neto_eval <= $costo_compra) {
-                            $match = false;
+                            // Excluir de la promoción si genera pérdida financiera
+                            if ($neto_eval <= $costo_compra) {
+                                $match = false;
+                            }
+                        }
+                    }
+
+                    if ($match) {
+                        $pct = intval($promo['porcentaje_descuento']);
+                        if ($pct > $max_descuento_porcentaje) {
+                            $max_descuento_porcentaje = $pct;
+                            $nombre_promo = $promo['nombre'];
                         }
                     }
                 }
 
-                if ($match) {
-                    $pct = intval($promo['porcentaje_descuento']);
-                    if ($pct > $max_descuento_porcentaje) {
-                        $max_descuento_porcentaje = $pct;
-                        $nombre_promo = $promo['nombre'];
-                    }
+                if ($max_descuento_porcentaje > 0) {
+                    $pv_orig = floatval($prod->precioventa);
+                    $monto_desc = $pv_orig * ($max_descuento_porcentaje / 100.0);
+                    $prod->precio_original = $pv_orig;
+                    $prod->precioventa = round($pv_orig - $monto_desc, 2);
+                    $prod->descuento_porcentaje = $max_descuento_porcentaje;
+                    $prod->descuento_monto = round($monto_desc, 2);
+                    $prod->tiene_promocion = 1;
+                    $prod->nombre_promocion = $nombre_promo;
+                } else {
+                    $prod->precio_original = floatval($prod->precioventa);
+                    $prod->descuento_porcentaje = 0;
+                    $prod->descuento_monto = 0;
+                    $prod->tiene_promocion = 0;
+                    $prod->nombre_promocion = '';
                 }
             }
 
-            if ($max_descuento_porcentaje > 0) {
-                $pv_orig = floatval($prod->precioventa);
-                $monto_desc = $pv_orig * ($max_descuento_porcentaje / 100.0);
-                $prod->precio_original = $pv_orig;
-                $prod->precioventa = round($pv_orig - $monto_desc, 2);
-                $prod->descuento_porcentaje = $max_descuento_porcentaje;
-                $prod->descuento_monto = round($monto_desc, 2);
-                $prod->tiene_promocion = 1;
-                $prod->nombre_promocion = $nombre_promo;
-            } else {
-                $prod->precio_original = floatval($prod->precioventa);
-                $prod->descuento_porcentaje = 0;
-                $prod->descuento_monto = 0;
-                $prod->tiene_promocion = 0;
-                $prod->nombre_promocion = '';
-            }
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'data' => $productos,
+                    'marcas' => $marcas
+                ]));
+        } catch (\Throwable $e) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'error',
+                    'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ]));
         }
-
-        echo json_encode([
-            'status' => 'success',
-            'data' => $productos,
-            'marcas' => $marcas
-        ]);
     }
 
     /**
@@ -270,39 +287,54 @@ class Tienda extends CI_Controller {
      * GET /tienda/configuracion
      */
     public function configuracion() {
-        // Obtener sucursales (depósitos) reales de la base de datos
-        $this->db->select('id, nombre');
-        if ($this->db->field_exists('estado', 'depositos')) {
-            $this->db->where('LOWER(estado)', 'activo');
-        }
-        if ($this->db->field_exists('tipo_almacen', 'depositos')) {
-            $this->db->where('tipo_almacen', 'Sucursal_Venta');
-        }
-        $this->db->order_by('id', 'ASC');
-        $sucursales = $this->db->get('depositos')->result_array();
-
-        // Configuración de la aplicación
-        $config_db = [];
-        if ($this->db->table_exists('configapp')) {
-            $config_db_row = $this->db->get('configapp')->row_array();
-            if ($config_db_row) {
-                $config_db = $config_db_row;
+        try {
+            // Obtener sucursales (depósitos) reales de la base de datos
+            $sucursales = [];
+            if ($this->db->table_exists('depositos')) {
+                $this->db->select('id, nombre');
+                if ($this->db->field_exists('estado', 'depositos')) {
+                    $this->db->where('LOWER(estado)', 'activo');
+                }
+                if ($this->db->field_exists('tipo_almacen', 'depositos')) {
+                    $this->db->where('tipo_almacen', 'Sucursal_Venta');
+                }
+                $this->db->order_by('id', 'ASC');
+                $sucursales = $this->db->get('depositos')->result_array();
             }
-        }
 
-        $config = [
-            'nrocuenta' => $config_db['nrocuenta'] ?? '1234567890',
-            'banco' => $config_db['banco'] ?? 'Banco Mercantil Santa Cruz',
-            'titularcuenta' => $config_db['titularcuenta'] ?? 'Ferretería Ofertón SRL',
-            'whatsapp' => '+591' . ($config_db['whatsapp'] ?? '77939732'),
-            'metodo_transferencia' => $config_db['metodo_transferencia'] ?? 1,
-            'metodo_qrbisa' => $config_db['metodo_qrbisa'] ?? 1,
-            'metodo_qrmercantil' => $config_db['metodo_qrmercantil'] ?? 1,
-            'sucursales' => $sucursales
-        ];
-        return $this->output
-            ->set_content_type('application/json')
-            ->set_output(json_encode(['status' => 'success', 'data' => $config]));
+            // Configuración de la aplicación
+            $config_db = [];
+            if ($this->db->table_exists('configapp')) {
+                $config_db_row = $this->db->get('configapp')->row_array();
+                if ($config_db_row) {
+                    $config_db = $config_db_row;
+                }
+            }
+
+            $config = [
+                'nrocuenta' => $config_db['nrocuenta'] ?? '1234567890',
+                'banco' => $config_db['banco'] ?? 'Banco Mercantil Santa Cruz',
+                'titularcuenta' => $config_db['titularcuenta'] ?? 'Ferretería Ofertón SRL',
+                'whatsapp' => '+591' . ($config_db['whatsapp'] ?? '77939732'),
+                'metodo_transferencia' => $config_db['metodo_transferencia'] ?? 1,
+                'metodo_qrbisa' => $config_db['metodo_qrbisa'] ?? 1,
+                'metodo_qrmercantil' => $config_db['metodo_qrmercantil'] ?? 1,
+                'sucursales' => $sucursales
+            ];
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['status' => 'success', 'data' => $config]));
+        } catch (\Throwable $e) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'error',
+                    'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ]));
+        }
     }
 
     /**
