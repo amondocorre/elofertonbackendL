@@ -326,9 +326,18 @@ class Ventas extends CI_Controller {
             $comision = floatval($comisionBase) * $impuestoFactor;
             $precioVenta = floatval($item['precioventa']);
 
+            // Si el producto viene con descuento o promoción aplicada desde el catálogo/frontend
+            $descuentoMontoItem = floatval($item['descuento_monto'] ?? 0);
+            $tienePromocionItem = !empty($item['tiene_promocion']) || !empty($item['nombre_promocion']) || $descuentoMontoItem > 0;
+            
+            if ($tienePromocionItem && $descuentoMontoItem > 0) {
+                $precioListaBase = max(0, $precioListaBase - $descuentoMontoItem);
+                $precioLista = ceil($precioListaBase * $impuestoFactor);
+            }
+
             if ($comision > 0) {
-                $precioMin = $precioLista - $comision;
-                if ($precioVenta < $precioMin - 0.009 || $precioVenta > $precioLista + 0.009) {
+                $precioMin = max(0, $precioLista - $comision);
+                if ($precioVenta < $precioMin - 0.05 || $precioVenta > (floatval($prodMaster->precioventa) * $impuestoFactor) + 0.05) {
                     return $this->output
                         ->set_status_header(400)
                         ->set_content_type('application/json')
@@ -338,14 +347,18 @@ class Ventas extends CI_Controller {
                                 . ' y Bs ' . number_format($precioLista, 2, '.', '') . '.',
                         ]));
                 }
-            } elseif (abs($precioVenta - $precioLista) > 0.009) {
-                return $this->output
-                    ->set_status_header(400)
-                    ->set_content_type('application/json')
-                    ->set_output(json_encode([
-                        'error' => 'El producto "' . ($item['descripcion'] ?? $inv->descripcion)
-                            . '" no permite modificar el precio de venta.',
-                    ]));
+            } else {
+                // Si tiene promoción o el vendedor le aplicó un descuento válido dentro del precio con promoción
+                $precioEsperado = $precioLista;
+                if ($precioVenta < $precioEsperado - 0.05 && !$tienePromocionItem) {
+                    return $this->output
+                        ->set_status_header(400)
+                        ->set_content_type('application/json')
+                        ->set_output(json_encode([
+                            'error' => 'El producto "' . ($item['descripcion'] ?? $inv->descripcion)
+                                . '" no permite modificar el precio de venta.',
+                        ]));
+                }
             }
         }
         unset($item);
