@@ -7,12 +7,15 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
-    # Responder OK (200) inmediatamente a peticiones preflight OPTIONS
+    # Interceptar peticiones preflight OPTIONS directamente en Apache y responder 204 sin pasar a PHP
     RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule ^(.*)$ $1 [R=200,L]
+    RewriteRule ^(.*)$ - [R=204,L]
+</IfModule>
 
+<IfModule mod_rewrite.c>
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^(.*)$ index.php/$1 [L]
 </IfModule>
+
 
