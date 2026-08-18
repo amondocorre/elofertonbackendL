@@ -22,129 +22,137 @@ class Tienda extends CI_Controller {
      * GET /tienda/productos?sucursal=1&q=clavos&marca=Truper
      */
     public function productos() {
-        $sucursal = $this->input->get('sucursal');
-        if (empty($sucursal) || $sucursal === '0') {
-            $header_sucursal = $this->input->get_request_header('X-Active-Branch', TRUE);
-            if (!empty($header_sucursal)) {
-                $sucursal = $header_sucursal;
-            }
-        }
-        $q = $this->input->get('q');
-        $marca = $this->input->get('marca');
-        $vendedor_id = $this->input->get('vendedor_id');
-
-        // Check if the vendedor is valid
-        $is_vendedor = false;
-        if (!empty($vendedor_id)) {
-            $this->db->where('id', $vendedor_id);
-            $vendedor = $this->db->get('vendedores')->row();
-            if ($vendedor && strtolower(trim($vendedor->estado)) === 'activo') {
-                // Obtener roles múltiples
-                $rolesQuery = $this->db->get_where('vendedores_roles', ['vendedor_id' => $vendedor->id])->result();
-                $roles_lower = array();
-                foreach ($rolesQuery as $rq) {
-                    if (!empty($rq->rol)) {
-                        $roles_lower[] = trim(strtolower($rq->rol));
-                    }
-                }
-                if (empty($roles_lower) && !empty($vendedor->rol)) {
-                    $roles_lower[] = trim(strtolower($vendedor->rol));
-                }
-                
-                if (in_array('vendedores', $roles_lower) || in_array('vendedor', $roles_lower) || in_array('admin', $roles_lower) || in_array('administrador', $roles_lower) || in_array('administradores', $roles_lower) || in_array('enc. tienda y caja', $roles_lower) || in_array('encargado de tienda', $roles_lower) || in_array('editor', $roles_lower)) {
-                    $is_vendedor = true;
-                    
-                    if ((empty($sucursal) || $sucursal === '0') && !empty($vendedor->ciudad)) {
-                        $sucursal = $vendedor->ciudad;
-                    }
-                }
-            }
-        }
-
-        // Obtener marcas únicas (antes de iniciar la consulta principal)
-        $this->db->select('m.nombre as marca, m.logo');
-        $this->db->from('productos p');
-        $this->db->join('marcas m', 'p.idmarca = m.id', 'inner');
-        $this->db->join('inventarios i', 'p.idprod = i.idprod', 'left');
-        $this->db->where('p.estado', 'Activo');
-        $this->db->distinct();
-        $this->db->order_by('m.nombre', 'ASC');
-        $marcas_result = $this->db->get()->result_array();
-        
-        $marcas = [];
-        foreach ($marcas_result as $row) {
-            if (!empty($row['marca'])) {
-                $marcas[] = [
-                    'nombre' => $row['marca'],
-                    'logo' => $row['logo'] ?? null
-                ];
-            }
-        }
-
-        // Campos base: JOIN con tabla 'inventarios' para obtener stock y precio por sucursal
-        $select_fields = '
-            COALESCE(MAX(inventarios.id), MAX(p.id)) as id,
-            p.idprod,
-            MAX(p.descripcion) AS descripcion,
-            MAX(c.descripcion) AS categoria,
-            MAX(m.nombre) AS marca,
-            MAX(p.idcategoria) AS idcategoria,
-            MAX(p.idmarca) AS idmarca,
-            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), "unid") AS unidad,
-            MAX(p.precioventa) AS precioventa,
-            COALESCE(NULLIF(MAX(inventarios.preciolocal), 0), MAX(p.preciolocal), 0) AS preciolocal,
-            MAX(p.nuevoprecio) AS preciomayor,
-            COALESCE(MAX(inventarios.deposito), 1) AS sucursal,
-            COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
-            NULLIF(MAX(p.imagen), "") AS imagen
-        ';
-        
-        if ($is_vendedor) {
-            $select_fields .= ', COALESCE(MAX(p.comision), 0) AS comision';
-            $select_fields .= ', MAX((SELECT COUNT(*) FROM vendedor_favoritos WHERE id_producto = COALESCE(inventarios.id, p.id) AND id_vendedor = ' . (int)$vendedor_id . ')) as is_favorito';
-        }
-
-        $this->db->select($select_fields, FALSE);
-        $this->db->from('productos p');
-        if (!empty($sucursal) && $sucursal !== '0') {
-            $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = ' . (int)$sucursal, 'left', FALSE);
-        } else {
-            $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = 1', 'left', FALSE);
-        }
-        $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left', FALSE);
-        $this->db->join('marcas m', 'p.idmarca = m.id', 'left', FALSE);
-        $this->db->where('p.estado', 'Activo');
-
-        if (!empty($marca) && $marca !== 'Todas') {
-            $this->db->where('m.nombre', $marca);
-        }
-
-        if (!empty($q)) {
-            $search_escaped = $this->db->escape_like_str(trim($q));
-            $this->db->group_start();
-            $this->db->like('p.descripcion', $search_escaped, 'both', FALSE);
-            $this->db->or_like('p.idprod', $search_escaped, 'both', FALSE);
-            $this->db->group_end();
-        }
-
-        $this->db->group_by('p.idprod');
-
-        // Ocultar productos con stock 0 si el usuario está logueado o si se solicita explícitamente
-        $user_id_param = $this->input->get('user_id');
-        $user_id_header = $this->input->get_request_header('X-User-Id', TRUE);
-        $ocultar_sin_stock = $this->input->get('ocultar_sin_stock');
-
-        if (!empty($vendedor_id) || !empty($user_id_param) || !empty($user_id_header) || $ocultar_sin_stock === '1' || $ocultar_sin_stock === 'true') {
-            $this->db->having('COALESCE(SUM(inventarios.cantidad), 0) > 0');
-        }
-
-        $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC', FALSE);
-        $this->db->order_by('MAX(p.descripcion)', 'ASC', FALSE);
-
-        $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
-        $productos = $this->db->get()->result();
-
         try {
+            $sucursal = $this->input->get('sucursal');
+            if (empty($sucursal) || $sucursal === '0') {
+                $header_sucursal = $this->input->get_request_header('X-Active-Branch', TRUE);
+                if (!empty($header_sucursal)) {
+                    $sucursal = $header_sucursal;
+                }
+            }
+            $q = $this->input->get('q');
+            $marca = $this->input->get('marca');
+            $vendedor_id = $this->input->get('vendedor_id');
+
+            // Check if the vendedor is valid
+            $is_vendedor = false;
+            if (!empty($vendedor_id)) {
+                $this->db->where('id', $vendedor_id);
+                $vendedor = $this->db->get('vendedores')->row();
+                if ($vendedor && strtolower(trim($vendedor->estado)) === 'activo') {
+                    // Obtener roles múltiples
+                    $roles_lower = array();
+                    if ($this->db->table_exists('vendedores_roles')) {
+                        $rolesQuery = $this->db->get_where('vendedores_roles', ['vendedor_id' => $vendedor->id])->result();
+                        foreach ($rolesQuery as $rq) {
+                            if (!empty($rq->rol)) {
+                                $roles_lower[] = trim(strtolower($rq->rol));
+                            }
+                        }
+                    }
+                    if (empty($roles_lower) && !empty($vendedor->rol)) {
+                        $roles_lower[] = trim(strtolower($vendedor->rol));
+                    }
+                    
+                    if (in_array('vendedores', $roles_lower) || in_array('vendedor', $roles_lower) || in_array('admin', $roles_lower) || in_array('administrador', $roles_lower) || in_array('administradores', $roles_lower) || in_array('enc. tienda y caja', $roles_lower) || in_array('encargado de tienda', $roles_lower) || in_array('editor', $roles_lower)) {
+                        $is_vendedor = true;
+                        
+                        if ((empty($sucursal) || $sucursal === '0') && !empty($vendedor->ciudad)) {
+                            $sucursal = $vendedor->ciudad;
+                        }
+                    }
+                }
+            }
+
+            // Obtener marcas únicas (antes de iniciar la consulta principal)
+            $marcas = [];
+            if ($this->db->table_exists('marcas') && $this->db->table_exists('productos')) {
+                $this->db->select('m.nombre as marca, m.logo');
+                $this->db->from('productos p');
+                $this->db->join('marcas m', 'p.idmarca = m.id', 'inner');
+                $this->db->join('inventarios i', 'p.idprod = i.idprod', 'left');
+                $this->db->where('p.estado', 'Activo');
+                $this->db->distinct();
+                $this->db->order_by('m.nombre', 'ASC');
+                $marcas_result = $this->db->get()->result_array();
+                
+                foreach ($marcas_result as $row) {
+                    if (!empty($row['marca'])) {
+                        $marcas[] = [
+                            'nombre' => $row['marca'],
+                            'logo' => $row['logo'] ?? null
+                        ];
+                    }
+                }
+            }
+
+            // Campos base: JOIN con tabla 'inventarios' para obtener stock y precio por sucursal
+            $select_fields = '
+                COALESCE(MAX(inventarios.id), MAX(p.id)) as id,
+                p.idprod,
+                MAX(p.descripcion) AS descripcion,
+                MAX(c.descripcion) AS categoria,
+                MAX(m.nombre) AS marca,
+                MAX(p.idcategoria) AS idcategoria,
+                MAX(p.idmarca) AS idmarca,
+                COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), "unid") AS unidad,
+                MAX(p.precioventa) AS precioventa,
+                COALESCE(NULLIF(MAX(inventarios.preciolocal), 0), MAX(p.preciolocal), 0) AS preciolocal,
+                MAX(p.nuevoprecio) AS preciomayor,
+                COALESCE(MAX(inventarios.deposito), 1) AS sucursal,
+                COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
+                NULLIF(MAX(p.imagen), "") AS imagen
+            ';
+            
+            if ($is_vendedor) {
+                $select_fields .= ', COALESCE(MAX(p.comision), 0) AS comision';
+                if ($this->db->table_exists('vendedor_favoritos')) {
+                    $select_fields .= ', MAX((SELECT COUNT(*) FROM vendedor_favoritos WHERE id_producto = COALESCE(inventarios.id, p.id) AND id_vendedor = ' . (int)$vendedor_id . ')) as is_favorito';
+                } else {
+                    $select_fields .= ', 0 as is_favorito';
+                }
+            }
+
+            $this->db->select($select_fields, FALSE);
+            $this->db->from('productos p');
+            if (!empty($sucursal) && $sucursal !== '0') {
+                $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = ' . (int)$sucursal, 'left', FALSE);
+            } else {
+                $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = 1', 'left', FALSE);
+            }
+            $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left', FALSE);
+            $this->db->join('marcas m', 'p.idmarca = m.id', 'left', FALSE);
+            $this->db->where('p.estado', 'Activo');
+
+            if (!empty($marca) && $marca !== 'Todas') {
+                $this->db->where('m.nombre', $marca);
+            }
+
+            if (!empty($q)) {
+                $search_escaped = $this->db->escape_like_str(trim($q));
+                $this->db->group_start();
+                $this->db->like('p.descripcion', $search_escaped, 'both', FALSE);
+                $this->db->or_like('p.idprod', $search_escaped, 'both', FALSE);
+                $this->db->group_end();
+            }
+
+            $this->db->group_by('p.idprod');
+
+            // Ocultar productos con stock 0 si el usuario está logueado o si se solicita explícitamente
+            $user_id_param = $this->input->get('user_id');
+            $user_id_header = $this->input->get_request_header('X-User-Id', TRUE);
+            $ocultar_sin_stock = $this->input->get('ocultar_sin_stock');
+
+            if (!empty($vendedor_id) || !empty($user_id_param) || !empty($user_id_header) || $ocultar_sin_stock === '1' || $ocultar_sin_stock === 'true') {
+                $this->db->having('COALESCE(SUM(inventarios.cantidad), 0) > 0');
+            }
+
+            $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC', FALSE);
+            $this->db->order_by('MAX(p.descripcion)', 'ASC', FALSE);
+
+            $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
+            $productos = $this->db->get()->result();
+
             // Enriquecer productos con promociones vigentes aplicables (Regla del Mayor Valor y Protección Financiera)
             $promociones = [];
             if ($this->db->table_exists('promociones_descuentos')) {
@@ -774,6 +782,7 @@ class Tienda extends CI_Controller {
      * Obtiene el listado de proformas generadas por un vendedor específico
      * GET /tienda/listar_proformas_vendedor?vendedor_id=X
      */
+    public function listar_proformas_vendedor() {
         // Expirar o restaurar proformas según dias_proforma de la configuración
         $config_app = $this->db->get('configapp')->row();
         $dias_proforma = (isset($config_app->dias_proforma) && intval($config_app->dias_proforma) > 0) ? intval($config_app->dias_proforma) : 1;
