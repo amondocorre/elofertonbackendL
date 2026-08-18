@@ -633,12 +633,23 @@ class Ventas extends CI_Controller {
             ]));
     }
 
+    private function expirar_proformas_vencidas() {
+        $config_app = $this->db->get('configapp')->row();
+        $dias = (isset($config_app->dias_proforma) && intval($config_app->dias_proforma) > 0) ? intval($config_app->dias_proforma) : 1;
+        
+        // Expirar proformas que sobrepasen el plazo de días configurado
+        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < DATE_SUB(CURDATE(), INTERVAL $dias DAY)");
+
+        // Restaurar proformas dentro del plazo configurado
+        $this->db->query("UPDATE proformas SET estado = 'Pendiente' WHERE estado = 'Vencido' AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL $dias DAY)");
+    }
+
     /**
      * Lista todas las proformas generadas en el sistema.
      */
     public function listar_proformas() {
-        // Expirar proformas pendientes de días anteriores
-        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < CURDATE()");
+        // Expirar proformas respetando dias_proforma de la configuración
+        $this->expirar_proformas_vencidas();
 
         $fechaInicio = $this->input->get('inicio');
         $fechaFin = $this->input->get('fin');
@@ -676,8 +687,8 @@ class Ventas extends CI_Controller {
      * Reporte detallado de proformas con múltiples filtros.
      */
     public function reporte_proformas() {
-        // Expirar proformas pendientes de días anteriores
-        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < CURDATE()");
+        // Expirar proformas respetando dias_proforma de la configuración
+        $this->expirar_proformas_vencidas();
 
         $fechaInicio = $this->input->get('inicio');
         $fechaFin = $this->input->get('fin');
@@ -1008,14 +1019,18 @@ class Ventas extends CI_Controller {
             return $this->output->set_status_header(404)->set_output(json_encode(['error' => 'Proforma no encontrada o pertenece a otro módulo']));
         }
 
-        // Expirar si está pendiente y pasó su tiempo de validez
+        // Expirar o restaurar estado según el tiempo de validez configurado (dias_proforma)
         $config_app = $this->db->get('configapp')->row();
-        $dias_proforma = isset($config_app->dias_proforma) ? (int)$config_app->dias_proforma : 1;
-        $fecha_expiracion = date('Y-m-d', strtotime($proforma->fecha . " + $dias_proforma days"));
+        $dias_proforma = (isset($config_app->dias_proforma) && intval($config_app->dias_proforma) > 0) ? intval($config_app->dias_proforma) : 1;
+        $fecha_proforma = date('Y-m-d', strtotime($proforma->fecha));
+        $fecha_limite = date('Y-m-d', strtotime($fecha_proforma . " + $dias_proforma days"));
 
-        if ($proforma->estado === 'Pendiente' && date('Y-m-d') >= $fecha_expiracion) {
-            $this->db->where('id', $nro)->update('proformas', ['estado' => 'Vencido']);
+        if ($proforma->estado === 'Pendiente' && date('Y-m-d') > $fecha_limite) {
+            $this->db->where('id', $proforma->id)->update('proformas', ['estado' => 'Vencido']);
             $proforma->estado = 'Vencido';
+        } else if ($proforma->estado === 'Vencido' && date('Y-m-d') <= $fecha_limite) {
+            $this->db->where('id', $proforma->id)->update('proformas', ['estado' => 'Pendiente']);
+            $proforma->estado = 'Pendiente';
         }
 
         $mode = $this->input->get('mode');

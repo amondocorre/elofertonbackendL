@@ -742,9 +742,11 @@ class Tienda extends CI_Controller {
      * Obtiene el listado de proformas generadas por un vendedor específico
      * GET /tienda/listar_proformas_vendedor?vendedor_id=X
      */
-    public function listar_proformas_vendedor() {
-        // Expirar proformas pendientes de días anteriores (damos 2 días de vigencia)
-        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < DATE_SUB(CURDATE(), INTERVAL 2 DAY)");
+        // Expirar o restaurar proformas según dias_proforma de la configuración
+        $config_app = $this->db->get('configapp')->row();
+        $dias_proforma = (isset($config_app->dias_proforma) && intval($config_app->dias_proforma) > 0) ? intval($config_app->dias_proforma) : 1;
+        $this->db->query("UPDATE proformas SET estado = 'Vencido' WHERE estado = 'Pendiente' AND DATE(fecha) < DATE_SUB(CURDATE(), INTERVAL $dias_proforma DAY)");
+        $this->db->query("UPDATE proformas SET estado = 'Pendiente' WHERE estado = 'Vencido' AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL $dias_proforma DAY)");
 
         $sellerId = $this->input->get('vendedor_id');
 
