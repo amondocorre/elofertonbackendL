@@ -217,8 +217,15 @@ class PasarelaQr extends CI_Controller
 
         if ($tx && !empty($tx->id_proforma)) {
             $proforma = $this->db->get_where('proformas', ['idproforma' => $tx->id_proforma])->row();
-        } else if (!$tx) {
+            if (!$proforma) {
+                $proforma = $this->db->get_where('proformas', ['id' => $tx->id_proforma])->row();
+            }
+        }
+        if (!$proforma) {
             $proforma = $this->db->get_where('proformas', ['idproforma' => $alias])->row();
+            if (!$proforma) {
+                $proforma = $this->db->get_where('proformas', ['id' => $alias])->row();
+            }
         }
 
         // 4. Iniciar transacción en la base de datos
@@ -226,10 +233,10 @@ class PasarelaQr extends CI_Controller
 
         // Actualizar tabla proformas si existe vinculación
         if ($proforma) {
-            $this->db->where('idproforma', $proforma->idproforma)->update('proformas', [
-                'estado' => 'PAGADO',
+            $this->db->where('id', $proforma->id)->update('proformas', [
+                'estado' => 'Pagado',
                 'formapago' => 'qr_bisa',
-                'pago' => $amount,
+                'pago' => $amount > 0 ? $amount : $proforma->total,
                 'saldo' => 0
             ]);
         }
@@ -255,7 +262,7 @@ class PasarelaQr extends CI_Controller
             $this->db->insert('bisa_qr_transacciones', [
                 'alias' => $alias,
                 'monto' => $amount,
-                'id_proforma' => $proforma ? $proforma->idproforma : null,
+                'id_proforma' => $proforma ? ($proforma->idproforma ?: $proforma->id) : null,
                 'id_qr' => $idQr,
                 'estado' => 'PAGADO',
                 'numero_orden_originante' => $numeroOrdenOriginante,
@@ -296,8 +303,32 @@ class PasarelaQr extends CI_Controller
         // Consultar transacción local primero
         $tx = $this->db->get_where('bisa_qr_transacciones', ['alias' => $alias])->row();
 
-        // Si ya está pagada localmente, retornamos PAGADO de inmediato sin consultar al banco
+        // Buscar proforma vinculada por idproforma o id
+        $proforma = null;
+        if ($tx && !empty($tx->id_proforma)) {
+            $proforma = $this->db->get_where('proformas', ['idproforma' => $tx->id_proforma])->row();
+            if (!$proforma) {
+                $proforma = $this->db->get_where('proformas', ['id' => $tx->id_proforma])->row();
+            }
+        }
+        if (!$proforma) {
+            $proforma = $this->db->get_where('proformas', ['idproforma' => $alias])->row();
+            if (!$proforma) {
+                $proforma = $this->db->get_where('proformas', ['id' => $alias])->row();
+            }
+        }
+
+        // Si ya está pagada localmente en la tabla de transacciones QR
         if ($tx && $tx->estado === 'PAGADO') {
+            if ($proforma && strtolower($proforma->estado) !== 'pagado') {
+                $this->db->where('id', $proforma->id)->update('proformas', [
+                    'estado' => 'Pagado',
+                    'formapago' => 'qr_bisa',
+                    'pago' => $proforma->total,
+                    'saldo' => 0
+                ]);
+            }
+
             return $this->output
                 ->set_status_header(200)
                 ->set_content_type('application/json')
@@ -310,6 +341,15 @@ class PasarelaQr extends CI_Controller
         // Validar si es una transacción simulada
         $isSimulated = $tx && (strpos($tx->id_qr, 'SIM_QR_') !== false);
         if ($isSimulated) {
+            if ($tx->estado === 'PAGADO' && $proforma && strtolower($proforma->estado) !== 'pagado') {
+                $this->db->where('id', $proforma->id)->update('proformas', [
+                    'estado' => 'Pagado',
+                    'formapago' => 'qr_bisa',
+                    'pago' => $proforma->total,
+                    'saldo' => 0
+                ]);
+            }
+
             return $this->output
                 ->set_status_header(200)
                 ->set_content_type('application/json')
@@ -326,10 +366,9 @@ class PasarelaQr extends CI_Controller
         if ($state === 'PAGADO') {
             $this->db->trans_start();
 
-            $proforma = $this->db->get_where('proformas', ['idproforma' => $alias])->row();
-            if ($proforma && $proforma->estado !== 'PAGADO') {
-                $this->db->where('idproforma', $alias)->update('proformas', [
-                    'estado' => 'PAGADO',
+            if ($proforma && strtolower($proforma->estado) !== 'pagado') {
+                $this->db->where('id', $proforma->id)->update('proformas', [
+                    'estado' => 'Pagado',
                     'formapago' => 'qr_bisa',
                     'pago' => $proforma->total,
                     'saldo' => 0
@@ -352,7 +391,7 @@ class PasarelaQr extends CI_Controller
                 $this->db->insert('bisa_qr_transacciones', [
                     'alias' => $alias,
                     'monto' => $proforma ? $proforma->total : 0,
-                    'id_proforma' => $proforma ? $proforma->idproforma : null,
+                    'id_proforma' => $proforma ? ($proforma->idproforma ?: $proforma->id) : null,
                     'estado' => 'PAGADO',
                     'fecha_registro' => date('Y-m-d H:i:s'),
                     'fecha_pago' => date('Y-m-d H:i:s')
