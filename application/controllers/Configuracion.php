@@ -33,6 +33,20 @@ class Configuracion extends CI_Controller {
         if (!$this->db->field_exists('dias_proforma', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN dias_proforma INT DEFAULT 1");
         }
+        if (!$this->db->table_exists('metodos_pago_custom')) {
+            $this->db->query("CREATE TABLE IF NOT EXISTS `metodos_pago_custom` (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `nombre` VARCHAR(100) NOT NULL,
+                `descripcion` VARCHAR(255) DEFAULT NULL,
+                `tipo` ENUM('banco','pasarela','qr','efectivo','otro') NOT NULL DEFAULT 'banco',
+                `pos_metodo` INT(11) DEFAULT 1,
+                `web_metodo` INT(11) DEFAULT 0,
+                `activo` INT(11) DEFAULT 1,
+                `configuracion_json` TEXT DEFAULT NULL,
+                `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;");
+        }
     }
 
     public function migrate_proforma() {
