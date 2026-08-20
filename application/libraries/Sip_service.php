@@ -242,20 +242,23 @@ class Sip_service
 
             if ($response) {
                 $data = json_decode($response, true);
-                $objeto = $data['objeto'] ?? [];
-                $estadoServicio = isset($objeto['estado']) ? strtoupper(trim($objeto['estado'])) : '';
-                $estadoPago = isset($objeto['estadoPago']) ? strtoupper(trim($objeto['estadoPago'])) : '';
-                $numOrden = $objeto['numeroOrdenOriginante'] ?? ($objeto['nroOrdenOriginante'] ?? null);
+                $objeto = $data['objeto'] ?? null;
+                
+                // Si la pasarela SIP responde con código 0000 u objeto no nulo
+                if (is_array($objeto) && !empty($objeto)) {
+                    $estadoServicio = isset($objeto['estado']) ? strtoupper(trim($objeto['estado'])) : '';
+                    $estadoPago = isset($objeto['estadoPago']) ? strtoupper(trim($objeto['estadoPago'])) : '';
 
-                if (in_array($estadoServicio, ['PAGADO', 'PROCESADO', 'CONFIRMADO', 'COMPLETADO', 'SUCCESS']) ||
-                    in_array($estadoPago, ['PAGADO', 'PROCESADO', 'CONFIRMADO', 'COMPLETADO', 'SUCCESS'])) {
-                    $state = 'PAGADO';
-                } else if (!empty($numOrden) || isset($objeto['fechaProceso']) || isset($objeto['fechaPago'])) {
-                    $state = 'PAGADO';
-                } else if (isset($data['codigo']) && $data['codigo'] === '0000' && !empty($objeto)) {
-                    // Si el código es 0000 y trae objeto con datos del cobro
-                    if (isset($objeto['idQr']) || isset($objeto['alias'])) {
+                    if (in_array($estadoServicio, ['PAGADO', 'PROCESADO', 'CONFIRMADO', 'COMPLETADO', 'SUCCESS']) ||
+                        in_array($estadoPago, ['PAGADO', 'PROCESADO', 'CONFIRMADO', 'COMPLETADO', 'SUCCESS'])) {
                         $state = 'PAGADO';
+                    } else if (isset($objeto['fechaProceso']) || isset($objeto['fechaPago']) || isset($objeto['numeroOrdenOriginante']) || isset($objeto['nroOrdenOriginante'])) {
+                        $state = 'PAGADO';
+                    } else {
+                        // Ante cualquier objeto con respuesta exitosa (0000) devuelto por el banco SIP al consultar la transacción
+                        if (isset($data['codigo']) && ($data['codigo'] === '0000' || $data['codigo'] === '0')) {
+                            $state = 'PAGADO';
+                        }
                     }
                 }
             }
