@@ -252,14 +252,14 @@ class Descuentos extends MY_Controller {
                     'descripcion' => $prod['descripcion'],
                     'marca' => $prod['marca'],
                     'categoria' => $prod['categoria'],
-                    'costo_compra' => $costo,
-                    'precio_venta' => $pv,
-                    'comision' => $comision,
-                    'porcentaje_descuento' => $porcentaje,
-                    'monto_descuento' => round($monto_descuento, 2),
-                    'precio_final' => round($pv_descuento, 2),
-                    'neto_empresa' => round($neto_empresa, 2),
-                    'perdida_estimada' => round($perdida, 2)
+                    'costo_compra' => ceil($costo),
+                    'precio_venta' => ceil($pv),
+                    'comision' => ceil($comision),
+                    'porcentaje_descuento' => ceil($porcentaje),
+                    'monto_descuento' => ceil($monto_descuento),
+                    'precio_final' => ceil($pv_descuento),
+                    'neto_empresa' => ceil($neto_empresa),
+                    'perdida_estimada' => ceil($perdida)
                 ];
             }
         }
@@ -379,15 +379,15 @@ class Descuentos extends MY_Controller {
                         'descripcion' => $prod['descripcion'],
                         'marca' => $prod['marca'],
                         'categoria' => $prod['categoria'],
-                        'costo_compra' => $costo,
-                        'precio_venta' => $pv,
-                        'comision' => $comision,
-                        'porcentaje_descuento' => $max_pct,
+                        'costo_compra' => ceil($costo),
+                        'precio_venta' => ceil($pv),
+                        'comision' => ceil($comision),
+                        'porcentaje_descuento' => ceil($max_pct),
                         'nombre_promocion' => $promo_nombre,
-                        'monto_descuento' => round($monto_descuento, 2),
-                        'precio_final' => round($pv_descuento, 2),
-                        'neto_empresa' => round($neto_empresa, 2),
-                        'perdida_estimada' => round($perdida, 2)
+                        'monto_descuento' => ceil($monto_descuento),
+                        'precio_final' => ceil($pv_descuento),
+                        'neto_empresa' => ceil($neto_empresa),
+                        'perdida_estimada' => ceil($perdida)
                     ];
                 }
             }

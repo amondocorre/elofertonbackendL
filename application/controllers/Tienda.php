@@ -7,7 +7,7 @@ class Tienda extends CI_Controller {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch, X-QR-Env, X-QR-ENV');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -254,11 +254,12 @@ class Tienda extends CI_Controller {
 
                 if ($max_descuento_porcentaje > 0) {
                     $pv_orig = floatval($prod->precioventa);
-                    $monto_desc = $pv_orig * ($max_descuento_porcentaje / 100.0);
+                    // Redondear el monto de descuento a entero para evitar decimales en el catálogo WEB
+                    $monto_desc = round($pv_orig * ($max_descuento_porcentaje / 100.0));
                     $prod->precio_original = $pv_orig;
-                    $prod->precioventa = round($pv_orig - $monto_desc, 2);
+                    $prod->precioventa = round($pv_orig - $monto_desc);
                     $prod->descuento_porcentaje = $max_descuento_porcentaje;
-                    $prod->descuento_monto = round($monto_desc, 2);
+                    $prod->descuento_monto = intval($monto_desc);
                     $prod->tiene_promocion = 1;
                     $prod->nombre_promocion = $nombre_promo;
                 } else {
@@ -462,39 +463,51 @@ class Tienda extends CI_Controller {
 
         $token = "WEB-" . strtoupper(substr(uniqid(), -6));
         $total = isset($input_data['total']) ? (float)$input_data['total'] : 0;
-        
-        $orden_data = [
+        $cliente = isset($input_data['cliente']) ? $input_data['cliente'] : 'Cliente Web';
+        $celular = isset($input_data['celular']) ? $input_data['celular'] : '';
+        $sucursal_id = isset($input_data['sucursal']) ? $input_data['sucursal'] : 1;
+
+        // Registrar la orden como proforma pagada desde la Web para ser recuperada en SISVEN
+        $proforma_data = [
+            'idproforma' => $token,
             'fecha' => date('Y-m-d H:i:s'),
-            'cliente' => isset($input_data['cliente']) ? $input_data['cliente'] : 'Cliente Web',
-            'nit' => isset($input_data['celular']) ? $input_data['celular'] : '0', // Usamos celular en NIT para referencia o creamos columna nueva
+            'cliente' => $cliente,
+            'telefono' => $celular,
+            'nit' => '0',
+            'complemento' => '',
             'total' => $total,
-            'formapago' => isset($input_data['metodo_pago']) ? $input_data['metodo_pago'] : 'transferencia',
-            'idneg' => isset($input_data['sucursal']) ? $input_data['sucursal'] : 1,
-            'idusr' => isset($input_data['vendedor_id']) ? $input_data['vendedor_id'] : 1, 
-            'vendedor' => isset($input_data['vendedor_id']) ? $input_data['vendedor_id'] : 1, 
-            'comentario' => "Orden Web Token: " . $token
+            'formapago' => 'qr-bisa',
+            'idneg' => $sucursal_id,
+            'idusr' => 1,
+            'vendedor' => 1,
+            'idcliente' => 0,
+            'pago' => $total,
+            'saldo' => 0,
+            'comentario' => "Pagado desde la WEB (QR BISA) - Token: " . $token,
+            'estado' => 'Pagado',
+            'tipo_proforma' => 'normal',
+            'con_factura' => 0,
+            'porcentaje_aplicado' => 0
         ];
 
-        // Se inserta en ventas (como una preventa/orden pendiente)
-        $this->db->insert('ventas', $orden_data);
+        $this->db->insert('proformas', $proforma_data);
         $insert_id = $this->db->insert_id();
 
-        // Insertar detalles
+        // Insertar detalle de la proforma
         foreach ($input_data['detalle'] as $item) {
-            $det_data = [
-                'idventa' => $insert_id,
-                'idprod' => $item['idprod'],
-                'descripcion' => $item['descripcion'],
-                'cantidad' => $item['cantidad'],
-                'precio' => $item['precioventa'],
-                'subtotal' => (float)$item['cantidad'] * (float)$item['precioventa']
+            $det_prof = [
+                'idproforma' => $token,
+                'idprod' => $item['idprod'] ?? ($item['id'] ?? ''),
+                'descripcion' => $item['descripcion'] ?? ($item['producto'] ?? ''),
+                'cuantos' => floatval($item['cantidad'] ?? 1),
+                'precioventa' => floatval($item['precioventa'] ?? ($item['precio'] ?? 0)),
+                'preciolocal' => floatval($item['preciocompra'] ?? ($item['preciolocal'] ?? 0)),
+                'preciofinal' => floatval($item['precioventa'] ?? ($item['precio'] ?? 0)),
+                'vendedor' => 1,
+                'comision' => 0,
+                'observaciones' => 'Compra WEB QR BISA'
             ];
-            $this->db->insert('ventas_detalle', $det_data);
-            
-            // Reducir stock temporalmente
-            $this->db->set('cantidad', 'cantidad - ' . (float)$item['cantidad'], FALSE);
-            $this->db->where('id', $item['id']);
-            $this->db->update('inventario');
+            $this->db->insert('detalleproformas', $det_prof);
         }
 
         $this->db->trans_complete();
@@ -524,9 +537,9 @@ class Tienda extends CI_Controller {
         }
 
         $phone = isset($input_data['celular']) ? trim($input_data['celular']) : '';
-        // Validar que el celular sea de Bolivia (8 dígitos y comience con 6 o 7)
-        if (!preg_match('/^[67]\d{7}$/', $phone)) {
-            echo json_encode(['status' => 'error', 'error' => 'El número de celular debe tener 8 dígitos y comenzar con 6 o 7.']);
+        // Validar que el celular sea de Bolivia (8 dígitos y comience con 5, 6 o 7)
+        if (!preg_match('/^[567]\d{7}$/', $phone)) {
+            echo json_encode(['status' => 'error', 'error' => 'El número de celular debe tener 8 dígitos y comenzar con 5, 6 o 7.']);
             return;
         }
 
@@ -695,6 +708,26 @@ class Tienda extends CI_Controller {
         }
 
         foreach ($input_data['detalle'] as $item) {
+            $itemComision = floatval($item['comision'] ?? 0);
+            if ($itemComision <= 0) {
+                $prodSearchId = $item['idprod'] ?? null;
+                if ($prodSearchId) {
+                    $pRow = $this->db->select('comision')->get_where('productos', ['idprod' => $prodSearchId])->row();
+                    if ($pRow) {
+                        $itemComision = floatval($pRow->comision ?? 0);
+                    }
+                }
+                if ($itemComision <= 0 && !empty($item['id'])) {
+                    $invRow = $this->db->select('idprod')->get_where('inventarios', ['id' => $item['id']])->row();
+                    if ($invRow) {
+                        $pRow = $this->db->select('comision')->get_where('productos', ['idprod' => $invRow->idprod])->row();
+                        if ($pRow) {
+                            $itemComision = floatval($pRow->comision ?? 0);
+                        }
+                    }
+                }
+            }
+
             $det_data = [
                 'idproforma' => $idproforma,
                 'idprod' => $item['id'], // El sistema POS requiere el ID numérico autoincremental
@@ -704,7 +737,7 @@ class Tienda extends CI_Controller {
                 'precioventa' => $item['precioventa'],
                 'preciofinal' => (float)$item['cantidad'] * (float)$item['precioventa'],
                 'vendedor' => $input_data['vendedor_id'] ?? 1,
-                'comision' => $item['comision'] ?? 0
+                'comision' => $itemComision
             ];
             $this->db->insert('detalleproformas', $det_data);
         }

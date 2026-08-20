@@ -7,7 +7,7 @@ class Ventas extends CI_Controller {
         parent::__construct();
         // Habilitar CORS
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Active-Branch, X-User-Id, X-Rol-Id');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Active-Branch, X-User-Id, X-Rol-Id, X-QR-Env, X-QR-ENV');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -226,8 +226,10 @@ class Ventas extends CI_Controller {
     }
 
     // Endpoint para procesar una venta
-    public function procesar() {
-        $data = json_decode(file_get_contents('php://input'), true);
+    public function procesar($data = null) {
+        if ($data === null || !is_array($data)) {
+            $data = json_decode(file_get_contents('php://input'), true);
+        }
         
         if (empty($data['cart']) || empty($data['total'])) {
             return $this->output
@@ -321,30 +323,38 @@ class Ventas extends CI_Controller {
             $esMayorista = ($depositoObj && $depositoObj->tipo_almacen === 'Deposito_Central');
             
             $precioListaBase = floatval($prodMaster->precioventa);
-            $precioLista = ceil($precioListaBase * $impuestoFactor);
             $comisionBase = $prodMaster->comision;
             $comision = floatval($comisionBase) * $impuestoFactor;
             $precioVenta = floatval($item['precioventa']);
 
-            // Si el producto viene con descuento o promoción aplicada desde el catálogo/frontend
-            $descuentoMontoItem = floatval($item['descuento_monto'] ?? 0);
+            // Obtener monto de descuento promocional si aplica
+            $descuentoMontoItem = $this->obtener_descuento_promocional_item($prodMaster, $item);
             $tienePromocionItem = !empty($item['tiene_promocion']) || !empty($item['nombre_promocion']) || $descuentoMontoItem > 0;
             
-            if ($tienePromocionItem && $descuentoMontoItem > 0) {
+            if ($descuentoMontoItem > 0) {
                 $precioListaBase = max(0, $precioListaBase - $descuentoMontoItem);
-                $precioLista = ceil($precioListaBase * $impuestoFactor);
             }
+            $precioLista = ceil($precioListaBase * $impuestoFactor);
 
             if ($comision > 0) {
                 $precioMin = max(0, $precioLista - $comision);
+                if (fmod($precioVenta, 1) != 0) {
+                    return $this->output
+                        ->set_status_header(400)
+                        ->set_content_type('application/json')
+                        ->set_output(json_encode([
+                            'error' => 'El precio de venta para "' . ($item['descripcion'] ?? $inv->descripcion)
+                                . '" debe ser un número entero sin decimales.',
+                        ]));
+                }
                 if ($precioVenta < $precioMin - 0.05 || $precioVenta > (floatval($prodMaster->precioventa) * $impuestoFactor) + 0.05) {
                     return $this->output
                         ->set_status_header(400)
                         ->set_content_type('application/json')
                         ->set_output(json_encode([
                             'error' => 'Precio inválido para "' . ($item['descripcion'] ?? $inv->descripcion)
-                                . '". Debe estar entre Bs ' . number_format($precioMin, 2, '.', '')
-                                . ' y Bs ' . number_format($precioLista, 2, '.', '') . '.',
+                                . '". Debe estar entre Bs ' . number_format($precioMin, 0, '.', '')
+                                . ' y Bs ' . number_format($precioLista, 0, '.', '') . '.',
                         ]));
                 }
             } else {
@@ -427,12 +437,29 @@ class Ventas extends CI_Controller {
             $prodMaster = $this->db->where('idprod', $idprod)->get('productos')->row();
             $prodIdMaster = $prodMaster ? $prodMaster->id : 0;
 
-            // Determinar la comisión real unitaria descontando la rebaja al cliente
-            $precioEsperado = $prodMaster ? floatval($prodMaster->precioventa) : 0;
+            // Determinar la comisión real unitaria e información del descuento promocional si aplica
+            $promoInfoItem = $this->obtener_descuento_promocional_info($prodMaster, $item);
+            $descuentoPromo = $promoInfoItem['monto'];
+            $obsPromoItem = '';
+            if ($promoInfoItem['porcentaje'] > 0 || $descuentoPromo > 0) {
+                $pctTxt = intval($promoInfoItem['porcentaje']);
+                if ($pctTxt <= 0 && $prodMaster && floatval($prodMaster->precioventa) > 0) {
+                    $pctTxt = round(($descuentoPromo / floatval($prodMaster->precioventa)) * 100);
+                }
+                $obsPromoItem = "Descuento Promocional: " . $pctTxt . "% OFF";
+                if (!empty($promoInfoItem['nombre'])) {
+                    $obsPromoItem .= " (" . $promoInfoItem['nombre'] . ")";
+                }
+            }
+
+            $precioEsperadoBase = $prodMaster ? max(0, floatval($prodMaster->precioventa) - $descuentoPromo) : 0;
+            $precioEsperado = $conFactura ? ceil($precioEsperadoBase * $impuestoFactor) : $precioEsperadoBase;
             $precioVentaReal = floatval($item['precioventa']);
             $comisionBase = $prodMaster ? floatval($prodMaster->comision) : 0;
+            $comisionBaseFinal = $conFactura ? ($comisionBase * $impuestoFactor) : $comisionBase;
+            
             $rebaja = max(0, $precioEsperado - $precioVentaReal);
-            $comisionUnitariaReal = max(0, $comisionBase - $rebaja);
+            $comisionUnitariaReal = max(0, $comisionBaseFinal - $rebaja);
 
 
             // Restar stock de la tabla de conciliación consolidada inventario_stock
@@ -478,7 +505,7 @@ class Ventas extends CI_Controller {
                     'descripcion' => $item['descripcion'] ?? $lote->descripcion,
                     'vendedor' => $data['vendedor'] ?? 1,
                     'pagocomision' => null,
-                    'observaciones' => '',
+                    'observaciones' => $obsPromoItem,
                     'cierre' => null
                 ];
                 $this->db->insert('detalleventas', $detalleData);
@@ -518,7 +545,7 @@ class Ventas extends CI_Controller {
                     'descripcion' => $item['descripcion'] ?? $inv->descripcion,
                     'vendedor' => $data['vendedor'] ?? 1,
                     'pagocomision' => null,
-                    'observaciones' => 'Venta sobregirada (stock negativo)',
+                    'observaciones' => !empty($obsPromoItem) ? "Venta sobregirada | " . $obsPromoItem : 'Venta sobregirada (stock negativo)',
                     'cierre' => null
                 ];
                 $this->db->insert('detalleventas', $detalleData);
@@ -669,7 +696,7 @@ class Ventas extends CI_Controller {
         $sucursal_activa = $this->input->get_request_header('X-Active-Branch', TRUE);
         $tipoProforma = $this->input->get('tipo') ?? 'normal';
         
-        $this->db->select('p.id, p.idproforma, p.fecha, p.cliente, p.total, p.estado, p.tipo_proforma, u.nombre AS usuario, d.nombre AS sucursal');
+        $this->db->select('p.id, p.idproforma, p.fecha, p.cliente, p.total, p.estado, p.comentario, p.tipo_proforma, u.nombre AS usuario, d.nombre AS sucursal');
         $this->db->from('proformas p');
         $this->db->join('vendedores u', 'p.idusr = u.id', 'left');
         $this->db->join('depositos d', 'p.idneg = d.id', 'left');
@@ -748,7 +775,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, COALESCE(i.idprod, p_old.idprod, dv.idprod) AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion, dv.comision AS comision_pagada, COALESCE(p.comision, p_old.comision) AS comision_producto');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, COALESCE(i.idprod, p_old.idprod, dv.idprod) AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, COALESCE(m_inv.nombre, m_p.nombre, m_p_old.nombre, NULLIF(i.marca, ""), NULLIF(p.marca, ""), NULLIF(p_old.marca, ""), "Sin Marca") AS marca, COALESCE(i.idmarca, p.idmarca, p_old.idmarca, 0) AS idmarca, COALESCE(pr_inv.nombre, pr_p.nombre, pr_p_old.nombre, NULLIF(i.proveedor, ""), NULLIF(p.proveedor, ""), NULLIF(p_old.proveedor, ""), "Sin Proveedor") AS proveedor, COALESCE(i.proveedor, p.proveedor, p_old.proveedor, 0) AS idproveedor, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion, dv.comision AS comision_pagada, COALESCE(p.comision, p_old.comision) AS comision_producto');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
         // Unir con inventarios (lotes) para obtener el SKU real en los nuevos datos
@@ -757,6 +784,14 @@ class Ventas extends CI_Controller {
         $this->db->join('productos p', 'i.idprod = p.idprod', 'left');
         // Unir con productos directamente por si es un registro antiguo (donde dv.idprod ya era el SKU)
         $this->db->join('productos p_old', 'dv.idprod = p_old.idprod', 'left');
+        // Unir con marcas
+        $this->db->join('marcas m_inv', 'i.idmarca = m_inv.id', 'left');
+        $this->db->join('marcas m_p', 'p.idmarca = m_p.id', 'left');
+        $this->db->join('marcas m_p_old', 'p_old.idmarca = m_p_old.id', 'left');
+        // Unir con proveedores
+        $this->db->join('proveedores pr_inv', 'i.proveedor = pr_inv.id', 'left');
+        $this->db->join('proveedores pr_p', 'p.proveedor = pr_p.id', 'left');
+        $this->db->join('proveedores pr_p_old', 'p_old.proveedor = pr_p_old.id', 'left');
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('vendedores u', 'v.vendedor = u.id', 'left');
 
@@ -793,6 +828,39 @@ class Ventas extends CI_Controller {
         $this->db->limit(2000);
         
         $reporte = $this->db->get()->result();
+
+        // Mapas de fallback para IDs numéricos de marcas y proveedores
+        $marcasMap = [];
+        $marcasQuery = $this->db->select('id, nombre')->get('marcas')->result();
+        foreach ($marcasQuery as $m) {
+            $marcasMap[$m->id] = $m->nombre;
+        }
+
+        $proveedoresMap = [];
+        $provQuery = $this->db->select('id, nombre')->get('proveedores')->result();
+        foreach ($provQuery as $pr) {
+            $proveedoresMap[$pr->id] = $pr->nombre;
+        }
+
+        foreach ($reporte as &$row) {
+            // Resolver nombre de Marca si es ID numérico o irreconocible
+            if (empty($row->marca) || $row->marca === 'Sin Marca' || is_numeric($row->marca)) {
+                $mId = is_numeric($row->marca) ? intval($row->marca) : intval($row->idmarca ?? 0);
+                if ($mId > 0 && isset($marcasMap[$mId])) {
+                    $row->marca = $marcasMap[$mId];
+                }
+            }
+
+            // Resolver nombre de Proveedor si es ID numérico o irreconocible
+            if (empty($row->proveedor) || $row->proveedor === 'Sin Proveedor' || is_numeric($row->proveedor)) {
+                $pId = is_numeric($row->proveedor) ? intval($row->proveedor) : intval($row->idproveedor ?? 0);
+                if ($pId > 0 && isset($proveedoresMap[$pId])) {
+                    $row->proveedor = $proveedoresMap[$pId];
+                } else if (is_numeric($row->proveedor)) {
+                    $row->proveedor = 'Sin Proveedor';
+                }
+            }
+        }
 
         return $this->output
             ->set_content_type('application/json')
@@ -1027,9 +1095,23 @@ class Ventas extends CI_Controller {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Número de proforma requerido']));
         }
 
-        $proforma = $this->db->where('id', $nro)->where('tipo_proforma', $tipoProforma)->get('proformas')->row();
+        $proforma = $this->db->group_start()
+            ->where('id', $nro)
+            ->or_where('idproforma', $nro)
+            ->group_end()
+            ->where('tipo_proforma', $tipoProforma)
+            ->get('proformas')->row();
+
         if (!$proforma) {
-            return $this->output->set_status_header(404)->set_output(json_encode(['error' => 'Proforma no encontrada o pertenece a otro módulo']));
+            $proforma = $this->db->group_start()
+                ->where('id', $nro)
+                ->or_where('idproforma', $nro)
+                ->group_end()
+                ->get('proformas')->row();
+        }
+
+        if (!$proforma) {
+            return $this->output->set_status_header(404)->set_output(json_encode(['error' => 'Proforma no encontrada']));
         }
 
         // Expirar o restaurar estado según el tiempo de validez configurado (dias_proforma)
@@ -1117,25 +1199,37 @@ class Ventas extends CI_Controller {
 
         $detalles = $this->db->where('idproforma', $proforma->idproforma)->get('detalleproformas')->result();
 
-        // Enriquecer detalles con información del inventario (código, precio original y stock disponible)
+        // Enriquecer detalles con información del inventario (código, precio original, comisión del maestro y stock disponible)
         foreach ($detalles as &$det) {
             $prod = $this->db->select('idprod, cantidad')->where('id', $det->idprod)->get('inventarios')->row();
             
+            $prodCode = null;
             if ($prod) {
-                $det->codigo = $prod->idprod;
-                $prodData = $this->db->select('precioventa')->where('idprod', $prod->idprod)->get('productos')->row();
+                $prodCode = $prod->idprod;
             } else {
                 $prod2 = $this->db->select('idprod')->where('id', $det->idprod)->get('productos')->row();
                 if ($prod2) {
-                    $det->codigo = $prod2->idprod;
-                    $prodData = $this->db->select('precioventa')->where('idprod', $prod2->idprod)->get('productos')->row();
+                    $prodCode = $prod2->idprod;
                 } else {
-                    $det->codigo = $det->idprod;
-                    $prodData = null;
+                    $prodCode = $det->idprod;
                 }
             }
-            $det->precioventaOriginal = $prodData ? $prodData->precioventa : $det->precioventa;
-            $det->stockMaximo = $prod ? $prod->cantidad : $det->cuantos;
+
+            $det->codigo = $prodCode;
+
+            // Consultar producto en la tabla de productos para obtener datos maestros (precioventa, comision)
+            $prodData = $this->db->select('precioventa, comision')->where('idprod', $prodCode)->get('productos')->row();
+
+            $det->precioventaOriginal = $prodData ? floatval($prodData->precioventa) : floatval($det->precioventa);
+            
+            // Si la comisión en la proforma es 0 o vacía, recuperar la comisión configurada en el producto maestro
+            if (empty($det->comision) || floatval($det->comision) <= 0) {
+                $det->comision = $prodData ? floatval($prodData->comision ?? 0) : 0;
+            } else {
+                $det->comision = floatval($det->comision);
+            }
+
+            $det->stockMaximo = $prod ? floatval($prod->cantidad) : floatval($det->cuantos);
         }
 
         return $this->output
@@ -2200,5 +2294,372 @@ class Ventas extends CI_Controller {
                 ]
             ]));
     }
+
+    /**
+     * Obtiene la información detallada del descuento promocional (monto, porcentaje y nombre de la promoción).
+     */
+    private function obtener_descuento_promocional_info($prodMaster, $item = []) {
+        $monto = 0;
+        $porcentaje = 0;
+        $nombre = '';
+
+        if (isset($item['descuento_monto']) && floatval($item['descuento_monto']) > 0) {
+            $monto = floatval($item['descuento_monto']);
+        }
+        if (isset($item['descuento_porcentaje']) && floatval($item['descuento_porcentaje']) > 0) {
+            $porcentaje = floatval($item['descuento_porcentaje']);
+        }
+        if (!empty($item['nombre_promocion'])) {
+            $nombre = trim($item['nombre_promocion']);
+        }
+
+        // Si ya se tiene el porcentaje o monto asignado al item, usarlo directamente sin sobrescribir con otras promociones
+        if ($monto > 0 || $porcentaje > 0) {
+            if ($porcentaje <= 0 && $monto > 0 && $prodMaster && floatval($prodMaster->precioventa) > 0) {
+                $porcentaje = round(($monto / floatval($prodMaster->precioventa)) * 100);
+            }
+            if ($monto <= 0 && $porcentaje > 0 && $prodMaster && floatval($prodMaster->precioventa) > 0) {
+                $monto = round(floatval($prodMaster->precioventa) * ($porcentaje / 100.0));
+            }
+            return [
+                'monto' => $monto,
+                'porcentaje' => $porcentaje,
+                'nombre' => $nombre
+            ];
+        }
+
+        if ($prodMaster && ($monto <= 0 || empty($nombre))) {
+            $hoy = date('Y-m-d');
+            $promociones = $this->db->query("
+                SELECT p.*, m.nombre as marca_nombre, c.descripcion as categoria_nombre 
+                FROM promociones_descuentos p 
+                LEFT JOIN marcas m ON p.marca_id = m.id 
+                LEFT JOIN categoria_producto c ON p.categoria_id = c.idcategoria 
+                WHERE p.activo = 1 AND DATE(p.fecha_inicio) <= '$hoy' AND DATE(p.fecha_fin) >= '$hoy' 
+                ORDER BY p.porcentaje_descuento DESC
+            ")->result_array();
+
+            if (!empty($promociones)) {
+                $comision_val = floatval($prodMaster->comision ?? 0);
+                $costo_compra = floatval($prodMaster->preciolocal ?? 0);
+                $pv_orig_base = floatval($prodMaster->precioventa ?? 0);
+
+                $prod_marca_str = '';
+                if (!empty($prodMaster->idmarca)) {
+                    $mrow = $this->db->get_where('marcas', ['id' => $prodMaster->idmarca])->row();
+                    if ($mrow) $prod_marca_str = strtolower(trim($mrow->nombre));
+                }
+                $prod_cat_str = '';
+                if (!empty($prodMaster->idcategoria)) {
+                    $crow = $this->db->get_where('categoria_producto', ['idcategoria' => $prodMaster->idcategoria])->row();
+                    if ($crow) $prod_cat_str = strtolower(trim($crow->descripcion));
+                }
+
+                foreach ($promociones as $promo) {
+                    $match = false;
+                    $tipo = $promo['tipo_filtro'] ?? 'todos';
+                    if ($tipo === 'todos') {
+                        $match = true;
+                    } else if ($tipo === 'comision') {
+                        $min_com = floatval($promo['comision_minima'] ?? 0);
+                        if ($min_com > 0) {
+                            if ($comision_val >= $min_com) {
+                                $match = true;
+                            }
+                        } else if ($comision_val > 0) {
+                            $match = true;
+                        }
+                    } else if ($tipo === 'productos' && !empty($promo['productos_ids'])) {
+                        $prod_list = json_decode($promo['productos_ids'], true);
+                        if (!is_array($prod_list)) {
+                            $prod_list = array_map('trim', explode(',', $promo['productos_ids']));
+                        }
+                        $prod_list_str = array_map('strval', $prod_list);
+                        if (in_array((string)($prodMaster->idprod ?? ''), $prod_list_str) || in_array((string)($prodMaster->id ?? ''), $prod_list_str)) {
+                            $match = true;
+                        }
+                    } else if ($tipo === 'marca') {
+                        if (!empty($promo['marca_id']) && !empty($prodMaster->idmarca) && (int)$promo['marca_id'] === (int)$prodMaster->idmarca) {
+                            $match = true;
+                        } else if (!empty($promo['marca_nombre']) && $prod_marca_str === strtolower(trim($promo['marca_nombre']))) {
+                            $match = true;
+                        }
+                    } else if ($tipo === 'categoria') {
+                        if (!empty($promo['categoria_id']) && !empty($prodMaster->idcategoria) && (int)$promo['categoria_id'] === (int)$prodMaster->idcategoria) {
+                            $match = true;
+                        } else if (!empty($promo['categoria_nombre']) && $prod_cat_str === strtolower(trim($promo['categoria_nombre']))) {
+                            $match = true;
+                        }
+                    }
+
+                    if ($match) {
+                        $pct_eval = intval($promo['porcentaje_descuento']);
+                        if ($costo_compra > 0 && $pv_orig_base > 0) {
+                            $monto_desc_eval = $pv_orig_base * ($pct_eval / 100.0);
+                            $pv_desc_eval = $pv_orig_base - $monto_desc_eval;
+                            $neto_eval = $pv_desc_eval - $comision_val;
+
+                            if ($neto_eval <= $costo_compra) {
+                                $match = false;
+                            }
+                        }
+                    }
+
+                    if ($match) {
+                        $pctPromo = floatval($promo['porcentaje_descuento'] ?? 0);
+                        if ($pctPromo > 0) {
+                            if ($porcentaje <= 0) $porcentaje = $pctPromo;
+                            if ($monto <= 0) $monto = round($pv_orig_base * ($pctPromo / 100.0));
+                            if (empty($nombre)) $nombre = trim($promo['nombre_promocion'] ?? $promo['nombre'] ?? $promo['titulo'] ?? '');
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($porcentaje <= 0 && $monto > 0 && $prodMaster && floatval($prodMaster->precioventa) > 0) {
+            $porcentaje = round(($monto / floatval($prodMaster->precioventa)) * 100);
+        }
+
+        return [
+            'monto' => $monto,
+            'porcentaje' => $porcentaje,
+            'nombre' => $nombre
+        ];
+    }
+
+    /**
+     * Calcula el monto de descuento promocional por unidad para un producto según promociones activas o datos del item.
+     */
+    private function obtener_descuento_promocional_item($prodMaster, $item = []) {
+        $info = $this->obtener_descuento_promocional_info($prodMaster, $item);
+        return $info['monto'];
+    }
+
+    /**
+     * Guarda o actualiza una Venta Abierta con pago QR pendiente
+     */
+    public function guardar_venta_abierta()
+    {
+        $alias = $this->input->post('alias');
+        $monto = floatval($this->input->post('monto'));
+        $qr_base64 = $this->input->post('qr_base64');
+        $id_qr = $this->input->post('id_qr');
+        $datos_venta = $this->input->post('datos_venta');
+
+        if (empty($alias) || $monto <= 0) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Alias o monto inválido']));
+        }
+
+        $tx = $this->db->get_where('bisa_qr_transacciones', ['alias' => $alias])->row();
+        if ($tx) {
+            $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
+                'monto' => $monto,
+                'id_qr' => $id_qr ? $id_qr : $tx->id_qr,
+                'qr_base64' => $qr_base64 ? $qr_base64 : $tx->qr_base64,
+                'datos_venta' => $datos_venta ? $datos_venta : $tx->datos_venta,
+                'estado' => ($tx->estado === 'PAGADO') ? 'PAGADO' : 'ABIERTA',
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+        } else {
+            $this->db->insert('bisa_qr_transacciones', [
+                'alias' => $alias,
+                'monto' => $monto,
+                'id_qr' => $id_qr,
+                'qr_base64' => $qr_base64,
+                'datos_venta' => $datos_venta,
+                'estado' => 'ABIERTA',
+                'fecha_registro' => date('Y-m-d H:i:s')
+            ]);
+        }
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode([
+                'status' => 'success',
+                'message' => 'Venta guardada como Venta Abierta correctamente'
+            ]));
+    }
+
+    /**
+     * Lista las ventas abiertas pendientes por cobro QR
+     */
+    public function listar_ventas_abiertas()
+    {
+        $this->db->from('bisa_qr_transacciones');
+        $this->db->where_in('estado', ['ABIERTA', 'PENDIENTE', 'PAGADO']);
+        $this->db->order_by('id', 'DESC');
+        $this->db->limit(100);
+        $ventas = $this->db->get()->result_array();
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode($ventas));
+    }
+
+    /**
+     * Verifica con la pasarela SIP si el pago de una Venta Abierta fue realizado.
+     * Si está pagado, finaliza la venta en la BD (descuento de inventarios, kardex, registro de venta) y retorna los datos para el recibo.
+     */
+    public function verificar_pago_venta_abierta()
+    {
+        $alias = $this->input->post('alias');
+        if (empty($alias)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Alias no proporcionado']));
+        }
+
+        $tx = $this->db->get_where('bisa_qr_transacciones', ['alias' => $alias])->row();
+        if (!$tx) {
+            return $this->output
+                ->set_status_header(404)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Transacción no encontrada']));
+        }
+
+        $estadoActual = strtoupper($tx->estado ?? '');
+        $estaPagado = ($estadoActual === 'PAGADO');
+
+        if (!$estaPagado) {
+            $this->load->library('sip_service');
+            $statusSip = $this->sip_service->checkStatus($alias);
+            if ($statusSip === 'PAGADO') {
+                $estaPagado = true;
+                $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
+                    'estado' => 'PAGADO',
+                    'fecha_pago' => date('Y-m-d H:i:s')
+                ]);
+            }
+        }
+
+        if (!$estaPagado) {
+            return $this->output
+                ->set_status_header(200)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'paid' => false,
+                    'message' => 'El pago en Banco BISA continúa PENDIENTE'
+                ]));
+        }
+
+        // Si ya fue procesada anteriormente, retornar info exitosa
+        if ($estadoActual === 'PROCESADO' && !empty($tx->id_venta)) {
+            return $this->output
+                ->set_status_header(200)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'paid' => true,
+                    'already_processed' => true,
+                    'id_venta' => $tx->id_venta,
+                    'alias' => $alias
+                ]));
+        }
+
+        // Procesar la venta en la base de datos
+        $datosVentaRaw = $tx->datos_venta;
+        $datos = json_decode($datosVentaRaw, true);
+
+        if (empty($datos) || empty($datos['cart'])) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Los datos de la venta están incompletos']));
+        }
+
+        // Construir el array estructurado para la venta
+        $salePayload = [
+            'cart' => $datos['cart'],
+            'total' => floatval($tx->monto),
+            'cliente' => $datos['cliente_id'] ?? null,
+            'cliente_nombre' => $datos['cliente_nombre'] ?? 'CLIENTE QR BISA',
+            'cliente_nit' => $datos['cliente_nit'] ?? '0',
+            'cliente_codigo' => $datos['cliente_codigo'] ?? '',
+            'cliente_complemento' => $datos['cliente_complemento'] ?? '',
+            'vendedor' => intval($datos['vendedor_id'] ?? 1),
+            'formapago' => 'qr_bisa',
+            'comentario' => $datos['comentario'] ?? 'Venta Abierta confirmada vía QR BISA',
+            'idneg' => intval($datos['deposito_id'] ?? 1),
+            'sucursal' => intval($datos['sucursal_id'] ?? 1),
+            'tipo_venta' => $datos['tipo_venta'] ?? 'contado',
+            'monto_pago' => floatval($tx->monto)
+        ];
+
+        // Ejecutar procesar internamente pasando $salePayload
+        $this->procesar($salePayload);
+        $resultJson = $this->output->get_output();
+
+        $resData = json_decode($resultJson, true);
+        if ($resData && (!empty($resData['idventa']) || !empty($resData['nro_venta']) || (isset($resData['status']) && $resData['status'] === 'success'))) {
+            $idVenta = $resData['idventa'] ?? $resData['sale_id'] ?? $resData['nro_venta'] ?? null;
+            $nroVenta = $resData['nro_venta'] ?? $idVenta;
+
+            $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
+                'estado' => 'PROCESADO',
+                'id_venta' => $idVenta,
+                'fecha_pago' => date('Y-m-d H:i:s')
+            ]);
+
+            return $this->output
+                ->set_status_header(200)
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'paid' => true,
+                    'sale_id' => $idVenta,
+                    'nro_venta' => $nroVenta,
+                    'cart' => $datos['cart'],
+                    'total' => $tx->monto,
+                    'client_name' => $datos['cliente_nombre'] ?? '',
+                    'client_nit' => $datos['cliente_nit'] ?? '',
+                    'client_code' => $datos['cliente_codigo'] ?? '',
+                    'client_complemento' => $datos['cliente_complemento'] ?? '',
+                    'payment_type' => $datos['tipo_venta'] ?? 'contado',
+                    'comments' => $datos['comentario'] ?? ''
+                ]));
+        } else {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'No se pudo procesar la venta en la base de datos', 'detail' => $resData]));
+        }
+    }
+
+    /**
+     * Cancela una Venta Abierta pendiente por QR
+     */
+    public function cancelar_venta_abierta()
+    {
+        $alias = $this->input->post('alias');
+        if (empty($alias)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Alias no proporcionado']));
+        }
+
+        $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
+            'estado' => 'CANCELADO',
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+
+        return $this->output
+            ->set_status_header(200)
+            ->set_content_type('application/json')
+            ->set_output(json_encode([
+                'status' => 'success',
+                'message' => 'Venta Abierta cancelada correctamente'
+            ]));
+    }
 }
+
 

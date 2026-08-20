@@ -48,15 +48,27 @@ class Sip_service
         $CI =& get_instance();
         $configDb = null;
         if ($CI) {
-            // Obtenemos el registro de la DB solo para la gestión del Token
-            $configDb = $CI->db->get('bisa_qr_config')->row();
-            
-            // Cargar configuración de archivo sip.php
             $CI->config->load('sip', true, true);
             $env = $CI->config->item('sip_environment', 'sip');
             $creds = $CI->config->item('sip_credentials', 'sip');
+
+            $configDb = $CI->db->get('bisa_qr_config')->row();
             
-            if ($env && isset($creds[$env])) {
+            // Si estamos en entorno de desarrollo, usar estrictamente las credenciales de desarrollo
+            if ($env === 'development' && isset($creds['development'])) {
+                $activeCreds = $creds['development'];
+                $this->apiKey = $activeCreds['api_key'];
+                $this->serviceKey = $activeCreds['service_key'];
+                $this->username = $activeCreds['username'];
+                $this->password = $activeCreds['password'];
+                $this->apiUrl = $activeCreds['api_url'];
+            } else if ($configDb && !empty($configDb->api_url) && !empty($configDb->api_key) && !empty($configDb->username)) {
+                $this->apiKey = $configDb->api_key;
+                $this->serviceKey = $configDb->service_key;
+                $this->username = $configDb->username;
+                $this->password = $configDb->password;
+                $this->apiUrl = $configDb->api_url;
+            } else if ($env && isset($creds[$env])) {
                 $activeCreds = $creds[$env];
                 $this->apiKey = $activeCreds['api_key'];
                 $this->serviceKey = $activeCreds['service_key'];
@@ -78,8 +90,8 @@ class Sip_service
     {
         $config = $this->loadConfig();
 
-        // Validar si el token actual sigue vigente
-        if ($config && !empty($config->token) && !empty($config->token_expires_at)) {
+        // Validar si el token actual sigue vigente y corresponde a la URL de API activa
+        if ($config && !empty($config->token) && !empty($config->token_expires_at) && isset($config->api_url) && $config->api_url === $this->apiUrl) {
             $expiresAt = strtotime($config->token_expires_at);
             // Si falta más de 1 minuto para expirar, reutilizar
             if ($expiresAt > (time() + 60)) {
@@ -116,6 +128,7 @@ class Sip_service
             $CI =& get_instance();
             if ($CI && $config) {
                 $CI->db->where('id', $config->id)->update('bisa_qr_config', [
+                    'api_url' => $this->apiUrl,
                     'token' => $token,
                     'token_expires_at' => $expiresAtStr,
                     'updated_at' => date('Y-m-d H:i:s')
@@ -136,95 +149,66 @@ class Sip_service
      */
     public function generateQr($alias, $amount, $detail)
     {
-        $token = $this->getToken();
-        if (!$token) {
-            log_message('error', "SIP BISA: No se pudo obtener el token de autenticación. Se generará un QR simulado de contingencia.");
-            return [
-                'status' => 'success',
-                'simulated' => true,
-                'idQr' => 'SIM_QR_' . uniqid(),
-                'qr_base64' => $this->getSimulatedQrBase64($alias, $amount)
-            ];
-        }
-
-        $url = $this->apiUrl . '/api/v1/generaQr';
-
-        $headers = [
-            'apikeyServicio: ' . $this->serviceKey,
-            'Authorization: Bearer ' . $token,
-            'Content-Type: application/json'
-        ];
-
-        // Cargar configuración de URL Callback
         $CI =& get_instance();
         $CI->load->helper('url');
         $CI->config->load('sip', true, true);
         $env = $CI->config->item('sip_environment', 'sip');
         $creds = $CI->config->item('sip_credentials', 'sip');
-        
-        $callbackUrl = site_url('PasarelaQr/callback_pago');
-        if ($env && isset($creds[$env]) && !empty($creds[$env]['callback'])) {
-            $callbackUrl = $creds[$env]['callback'];
-        }
 
-        // Vencimiento del QR en 2 días
-        $expirationDate = date('d/m/Y', strtotime('+2 days'));
+        $token = $this->getToken();
+        if ($token) {
+            $url = $this->apiUrl . '/api/v1/generaQr';
 
-        $body = [
-            'alias' => $alias,
-            'callback' => $callbackUrl,
-            'detalleGlosa' => $detail,
-            'monto' => number_format($amount, 2, '.', ''),
-            'moneda' => 'BOB',
-            'fechaVencimiento' => $expirationDate,
-            'tipoSolicitud' => 'API'
-        ];
-
-        $response = $this->sendPostRequest($url, $headers, $body);
-
-        if (!$response) {
-            log_message('error', "SIP BISA: Error de conexión con el servidor al generar QR. Se usará contingencia simulada.");
-            return [
-                'status' => 'success',
-                'simulated' => true,
-                'idQr' => 'SIM_QR_' . uniqid(),
-                'qr_base64' => $this->getSimulatedQrBase64($alias, $amount)
+            $headers = [
+                'apikeyServicio: ' . $this->serviceKey,
+                'Authorization: Bearer ' . $token,
+                'Content-Type: application/json'
             ];
-        }
 
-        $data = json_decode($response, true);
-        file_put_contents(APPPATH . 'logs/debug_bisa_response.txt', "TIME: " . date('Y-m-d H:i:s') . "\nRESPONSE: " . var_export($response, true) . "\n", FILE_APPEND);
-        log_message('error', 'Respuesta Sip_service generaQr: ' . $response);
-
-        // Si el usuario no tiene permisos en el entorno de desarrollo, simular el QR
-        $code = $data['codigo'] ?? '';
-        $message = $data['mensaje'] ?? '';
-
-        if ($code === '9999' && strpos(strtolower($message), 'permisos') !== false) {
-            log_message('debug', "SIP BISA: Servidor devolvió error de permisos. Usando QR simulado.");
-            return [
-                'status' => 'success',
-                'simulated' => true,
-                'idQr' => 'SIM_QR_' . uniqid(),
-                'qr_base64' => $this->getSimulatedQrBase64($alias, $amount)
-            ];
-        }
-
-        if ($code === '0000' || (isset($data['objeto']) && $data['objeto'] !== null)) {
-            // La API de BISA devuelve el base64 en el campo 'imagenQr' (no 'imagenBase64')
-            $qrBase64 = $data['objeto']['imagenQr'] ?? $data['objeto']['imagenBase64'] ?? null;
-            if (empty($qrBase64)) {
-                $qrBase64 = $this->getSimulatedQrBase64($alias, $amount);
+            $callbackUrl = site_url('PasarelaQr/callback_pago');
+            if ($env && isset($creds[$env]) && !empty($creds[$env]['callback'])) {
+                $callbackUrl = $creds[$env]['callback'];
             }
-            return [
-                'status' => 'success',
-                'simulated' => false,
-                'idQr' => $data['objeto']['idQr'] ?? ('QR_' . uniqid()),
-                'qr_base64' => $qrBase64
+
+            $expirationDate = date('d/m/Y', strtotime('+2 days'));
+
+            $body = [
+                'alias' => $alias,
+                'callback' => $callbackUrl,
+                'detalleGlosa' => $detail,
+                'monto' => number_format($amount, 2, '.', ''),
+                'moneda' => 'BOB',
+                'fechaVencimiento' => $expirationDate,
+                'tipoSolicitud' => 'API'
             ];
+
+            $response = $this->sendPostRequest($url, $headers, $body);
+
+            if ($response) {
+                $data = json_decode($response, true);
+                file_put_contents(APPPATH . 'logs/debug_bisa_response.txt', "TIME: " . date('Y-m-d H:i:s') . "\nRESPONSE: " . var_export($response, true) . "\n", FILE_APPEND);
+                log_message('error', 'Respuesta Sip_service generaQr: ' . $response);
+
+                $code = $data['codigo'] ?? '';
+                if ($code === '0000' || (isset($data['objeto']) && $data['objeto'] !== null)) {
+                    $qrBase64 = $data['objeto']['imagenQr'] ?? $data['objeto']['imagenBase64'] ?? null;
+                    if (!empty($qrBase64)) {
+                        return [
+                            'status' => 'success',
+                            'simulated' => false,
+                            'idQr' => $data['objeto']['idQr'] ?? ('QR_' . uniqid()),
+                            'qr_base64' => $qrBase64
+                        ];
+                    }
+                }
+            } else {
+                log_message('error', "SIP BISA: Error de conexión con el servidor $url.");
+            }
+        } else {
+            log_message('error', "SIP BISA: No se pudo obtener token de autenticación para {$this->apiUrl}.");
         }
 
-        log_message('error', "SIP BISA: Error devuelto por la API del banco ($message). Usando contingencia simulada.");
+        log_message('error', "SIP BISA: Error devuelto por la pasarela bancaria. Usando contingencia simulada.");
         return [
             'status' => 'success',
             'simulated' => true,
@@ -242,47 +226,29 @@ class Sip_service
     public function checkStatus($alias)
     {
         $token = $this->getToken();
-        if (!$token) {
-            log_message('error', "SIP BISA: No se pudo obtener el token para verificar estado. Retornando PENDIENTE.");
-            return 'PENDIENTE';
+        $state = 'PENDIENTE';
+
+        if ($token) {
+            $url = $this->apiUrl . '/api/v1/estadoTransaccion';
+            $headers = [
+                'apikeyServicio: ' . $this->serviceKey,
+                'Authorization: Bearer ' . $token,
+                'Content-Type: application/json'
+            ];
+            $body = ['alias' => $alias];
+            $response = $this->sendPostRequest($url, $headers, $body);
+
+            if ($response) {
+                $data = json_decode($response, true);
+                if (isset($data['objeto']['estado'])) {
+                    $state = strtoupper($data['objeto']['estado']);
+                } else if (isset($data['codigo']) && $data['codigo'] === '0000' && isset($data['objeto']['numeroOrdenOriginante'])) {
+                    $state = 'PAGADO';
+                }
+            }
         }
 
-        $url = $this->apiUrl . '/api/v1/estadoTransaccion';
-
-        $headers = [
-            'apikeyServicio: ' . $this->serviceKey,
-            'Authorization: Bearer ' . $token,
-            'Content-Type: application/json'
-        ];
-
-        $body = [
-            'alias' => $alias
-        ];
-
-        $response = $this->sendPostRequest($url, $headers, $body);
-
-        if (!$response) {
-            return 'ERROR_CONEXION';
-        }
-
-        $data = json_decode($response, true);
-        
-        // Retornar estado si existe (algunas versiones de la API podrían retornarlo)
-        if (isset($data['objeto']['estado'])) {
-            return strtoupper($data['objeto']['estado']);
-        }
-
-        // Si no hay campo estado pero el código es 0000 y hay numeroOrdenOriginante, asumimos PAGADO
-        if (isset($data['codigo']) && $data['codigo'] === '0000' && isset($data['objeto']['numeroOrdenOriginante'])) {
-            return 'PAGADO';
-        }
-
-        // Si el código es 0000 pero no hay número de orden, puede seguir pendiente
-        if (isset($data['codigo']) && $data['codigo'] === '0000') {
-            return 'PENDIENTE';
-        }
-
-        return 'PENDIENTE';
+        return $state;
     }
 
     /**

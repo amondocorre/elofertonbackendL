@@ -10,8 +10,16 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 | Valores soportados: 'development' o 'production'
 |
 */
-//$config['sip_environment'] = 'development';
-$config['sip_environment'] = 'production';
+// Se determina dinámicamente según la cabecera HTTP del cliente o la constante ENVIRONMENT de CodeIgniter
+$client_qr_env = isset($_POST['qr_env']) ? strtolower($_POST['qr_env']) : (isset($_SERVER['HTTP_X_QR_ENV']) ? strtolower($_SERVER['HTTP_X_QR_ENV']) : '');
+if ($client_qr_env === 'sandbox' || $client_qr_env === 'development') {
+    $config['sip_environment'] = 'development';
+} else if ($client_qr_env === 'production' || $client_qr_env === 'live') {
+    $config['sip_environment'] = 'production';
+} else {
+    $config['sip_environment'] = (ENVIRONMENT === 'development') ? 'development' : 'production';
+}
+
 
 /*
 |--------------------------------------------------------------------------

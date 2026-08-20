@@ -12,7 +12,7 @@ class VentasMayorista extends MY_Controller {
     public function __construct() {
         parent::__construct();
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Active-Branch, X-User-Id, X-Rol-Id');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Active-Branch, X-User-Id, X-Rol-Id, X-QR-Env, X-QR-ENV');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { exit(); }
         $this->load->database();

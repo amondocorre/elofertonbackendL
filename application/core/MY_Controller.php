@@ -12,7 +12,7 @@ class MY_Controller extends CI_Controller {
         
         // Habilitar CORS de manera general
         header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch');
+        header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization, X-User-Id, X-Rol-Id, X-Active-Branch, X-QR-Env, X-QR-ENV');
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE');
         
         if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -34,26 +34,64 @@ class MY_Controller extends CI_Controller {
         $sistema = $this->db->get_where('sistemas', ['nombre_sistema' => $sistemaName])->row();
         $sistemaId = $sistema ? $sistema->id : 0;
 
-        $sql = "SELECT 
-                    m.id AS id_modulo,
-                    m.nombre_modulo,
-                    m.url,
-                    m.icono,
-                    m.id_padre,
-                    m.orden,
-                    COALESCE(u_perm.ver, r_perm.ver, 0) AS ver,
-                    COALESCE(u_perm.crear, r_perm.crear, 0) AS crear,
-                    COALESCE(u_perm.editar, r_perm.editar, 0) AS editar,
-                    COALESCE(u_perm.eliminar, r_perm.eliminar, 0) AS eliminar
-                FROM modulos_menu m
-                LEFT JOIN permisos_roles r_perm 
-                    ON r_perm.id_modulo = m.id AND r_perm.id_rol = ?
-                LEFT JOIN permisos_usuarios u_perm 
-                    ON u_perm.id_modulo = m.id AND u_perm.id_usuario = ?
-                WHERE m.id_sistema = ?
-                ORDER BY m.id_padre ASC, m.orden ASC";
+        // Comprobar si el usuario tiene excepciones registradas en permisos_usuarios
+        $hasCustom = $this->db->get_where('permisos_usuarios', ['id_usuario' => $userId])->num_rows() > 0;
 
-        return $this->db->query($sql, [$rolId, $userId, $sistemaId])->result_array();
+        if ($hasCustom) {
+            // Si el usuario tiene excepciones personalizadas en permisos_usuarios, prevalecen sobre el rol
+            $sql = "SELECT 
+                        m.id AS id_modulo,
+                        m.nombre_modulo,
+                        m.url,
+                        m.icono,
+                        m.id_padre,
+                        m.orden,
+                        COALESCE(u_perm.ver, r_perm.ver, 0) AS ver,
+                        COALESCE(u_perm.crear, r_perm.crear, 0) AS crear,
+                        COALESCE(u_perm.editar, r_perm.editar, 0) AS editar,
+                        COALESCE(u_perm.eliminar, r_perm.eliminar, 0) AS eliminar
+                    FROM modulos_menu m
+                    LEFT JOIN permisos_roles r_perm 
+                        ON r_perm.id_modulo = m.id AND r_perm.id_rol = ?
+                    LEFT JOIN permisos_usuarios u_perm 
+                        ON u_perm.id_modulo = m.id AND u_perm.id_usuario = ?
+                    WHERE m.id_sistema = ?
+                    ORDER BY m.id_padre ASC, m.orden ASC";
+
+            return $this->db->query($sql, [$rolId, $userId, $sistemaId])->result_array();
+        } else {
+            // Si no tiene excepciones personalizadas, combina los permisos del rol principal y múltiples roles
+            $rolesList = [intval($rolId)];
+            $userRoles = $this->db->get_where('vendedores_roles', ['vendedor_id' => $userId])->result_array();
+            foreach ($userRoles as $ur) {
+                $rName = $ur['rol'];
+                $rRow = $this->db->get_where('roles', ['nombre_rol' => $rName])->row();
+                if ($rRow && !in_array((int)$rRow->id, $rolesList)) {
+                    $rolesList[] = (int)$rRow->id;
+                }
+            }
+
+            $rolesPlaceholder = implode(',', $rolesList);
+            $sql = "SELECT 
+                        m.id AS id_modulo,
+                        m.nombre_modulo,
+                        m.url,
+                        m.icono,
+                        m.id_padre,
+                        m.orden,
+                        COALESCE(MAX(r_perm.ver), 0) AS ver,
+                        COALESCE(MAX(r_perm.crear), 0) AS crear,
+                        COALESCE(MAX(r_perm.editar), 0) AS editar,
+                        COALESCE(MAX(r_perm.eliminar), 0) AS eliminar
+                    FROM modulos_menu m
+                    LEFT JOIN permisos_roles r_perm 
+                        ON r_perm.id_modulo = m.id AND r_perm.id_rol IN ($rolesPlaceholder)
+                    WHERE m.id_sistema = ?
+                    GROUP BY m.id
+                    ORDER BY m.id_padre ASC, m.orden ASC";
+
+            return $this->db->query($sql, [$sistemaId])->result_array();
+        }
     }
 
     /**

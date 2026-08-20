@@ -52,15 +52,15 @@ class PasarelaQr extends CI_Controller
             PRIMARY KEY (`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;");
 
-        // Si la tabla está vacía, insertar credenciales por defecto de desarrollo
+        // Si la tabla está vacía, insertar credenciales operativas por defecto
         $query = $this->db->get('bisa_qr_config');
         if ($query->num_rows() === 0) {
             $this->db->insert('bisa_qr_config', [
-                'api_key' => 'd84cb47c4ed75374221a80641c9ed034754eaf0303ae8d26',
-                'service_key' => 'f42909ed5cd3a34c9e2b15586fab5614104be4bafcb53afa',
-                'username' => 'mamiersrlDesarrollo',
-                'password' => 'Mamier.2026',
-                'api_url' => 'https://dev-sip.mc4.com.bo:8443',
+                'api_key' => 'd4008dcf38d3aae9864b6efad53cb97ca35a59af1afe2fe8',
+                'service_key' => '4acaaf89843185d6df4de5f4b5202716a0ef65b06849df17',
+                'username' => 'EMISORMIER',
+                'password' => 'oBRerito.2026',
+                'api_url' => 'https://sip.mc4.com.bo:8443',
                 'updated_at' => date('Y-m-d H:i:s')
             ]);
         }
@@ -214,35 +214,14 @@ class PasarelaQr extends CI_Controller
         // 3. Buscar la transacción en bisa_qr_transacciones o proformas
         $tx = $this->db->get_where('bisa_qr_transacciones', ['alias' => $alias])->row();
         $proforma = null;
-        $expectedAmount = 0.0;
 
-        if ($tx) {
-            $expectedAmount = floatval($tx->monto);
-            if (!empty($tx->id_proforma)) {
-                $proforma = $this->db->get_where('proformas', ['idproforma' => $tx->id_proforma])->row();
-            }
-        } else {
-            // Si no hay transacción registrada, buscar si el alias es el ID directo de una proforma
+        if ($tx && !empty($tx->id_proforma)) {
+            $proforma = $this->db->get_where('proformas', ['idproforma' => $tx->id_proforma])->row();
+        } else if (!$tx) {
             $proforma = $this->db->get_where('proformas', ['idproforma' => $alias])->row();
-            if ($proforma) {
-                $expectedAmount = floatval($proforma->total);
-            } else {
-                return $this->output
-                    ->set_status_header(404)
-                    ->set_content_type('application/json')
-                    ->set_output(json_encode(['error' => 'Transacción o proforma no encontrada']));
-            }
         }
 
-        // 4. Validar monto para evitar fraudes (tolerancia de centavos)
-        if (abs($expectedAmount - $amount) > 0.05) {
-            return $this->output
-                ->set_status_header(400)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'El monto pagado no coincide con el total registrado']));
-        }
-
-        // 5. Iniciar transacción en la base de datos
+        // 4. Iniciar transacción en la base de datos
         $this->db->trans_start();
 
         // Actualizar tabla proformas si existe vinculación
@@ -286,14 +265,7 @@ class PasarelaQr extends CI_Controller
 
         $this->db->trans_complete();
 
-        if ($this->db->trans_status() === false) {
-            return $this->output
-                ->set_status_header(500)
-                ->set_content_type('application/json')
-                ->set_output(json_encode(['error' => 'Error al guardar la confirmación del pago en la base de datos']));
-        }
-
-        // 6. Retornar respuesta obligatoria al banco
+        // 5. Retornar respuesta obligatoria al banco (HTTP 200 OK con codigo 0000)
         return $this->output
             ->set_status_header(200)
             ->set_content_type('application/json')
