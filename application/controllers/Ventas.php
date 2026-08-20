@@ -2528,6 +2528,14 @@ class Ventas extends CI_Controller {
         $estadoActual = strtoupper($tx->estado ?? '');
         $estaPagado = ($estadoActual === 'PAGADO');
 
+        if (!$estaPagado && !empty($tx->id_proforma)) {
+            $profCheck = $this->db->get_where('proformas', ['idproforma' => $tx->id_proforma])->row();
+            if ($profCheck && strtoupper($profCheck->estado ?? '') === 'PAGADO') {
+                $estaPagado = true;
+                $this->db->where('alias', $alias)->update('bisa_qr_transacciones', ['estado' => 'PAGADO', 'fecha_pago' => date('Y-m-d H:i:s')]);
+            }
+        }
+
         if (!$estaPagado) {
             $this->load->library('sip_service');
             $statusSip = $this->sip_service->checkStatus($alias);

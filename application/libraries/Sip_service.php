@@ -238,12 +238,25 @@ class Sip_service
             $body = ['alias' => $alias];
             $response = $this->sendPostRequest($url, $headers, $body);
 
+            file_put_contents(APPPATH . 'logs/debug_check_status.txt', "TIME: " . date('Y-m-d H:i:s') . " ALIAS: $alias\nRESPONSE: " . var_export($response, true) . "\n", FILE_APPEND);
+
             if ($response) {
                 $data = json_decode($response, true);
-                if (isset($data['objeto']['estado'])) {
-                    $state = strtoupper($data['objeto']['estado']);
-                } else if (isset($data['codigo']) && $data['codigo'] === '0000' && isset($data['objeto']['numeroOrdenOriginante'])) {
+                $objeto = $data['objeto'] ?? [];
+                $estadoServicio = isset($objeto['estado']) ? strtoupper(trim($objeto['estado'])) : '';
+                $estadoPago = isset($objeto['estadoPago']) ? strtoupper(trim($objeto['estadoPago'])) : '';
+                $numOrden = $objeto['numeroOrdenOriginante'] ?? ($objeto['nroOrdenOriginante'] ?? null);
+
+                if (in_array($estadoServicio, ['PAGADO', 'PROCESADO', 'CONFIRMADO', 'COMPLETADO', 'SUCCESS']) ||
+                    in_array($estadoPago, ['PAGADO', 'PROCESADO', 'CONFIRMADO', 'COMPLETADO', 'SUCCESS'])) {
                     $state = 'PAGADO';
+                } else if (!empty($numOrden) || isset($objeto['fechaProceso']) || isset($objeto['fechaPago'])) {
+                    $state = 'PAGADO';
+                } else if (isset($data['codigo']) && $data['codigo'] === '0000' && !empty($objeto)) {
+                    // Si el código es 0000 y trae objeto con datos del cobro
+                    if (isset($objeto['idQr']) || isset($objeto['alias'])) {
+                        $state = 'PAGADO';
+                    }
                 }
             }
         }
