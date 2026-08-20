@@ -1909,8 +1909,18 @@ class Ventas extends CI_Controller {
     public function consultar_pago_bisa() {
         $alias = $this->input->get('alias');
         if (!$alias) {
+            $alias = $this->input->post('alias');
+        }
+        if (!$alias) {
+            $rawInput = $this->input->raw_input_stream;
+            $data = json_decode($rawInput, true);
+            $alias = $data['alias'] ?? null;
+        }
+
+        if (!$alias) {
             return $this->output
                 ->set_status_header(400)
+                ->set_content_type('application/json')
                 ->set_output(json_encode(['error' => 'Alias requerido']));
         }
 
@@ -1919,10 +1929,22 @@ class Ventas extends CI_Controller {
         if (!$tx) {
             return $this->output
                 ->set_status_header(404)
+                ->set_content_type('application/json')
                 ->set_output(json_encode(['error' => 'Transaccion no encontrada']));
         }
 
-        if ($tx->estado === 'PAGADO') {
+        $estadoActual = strtoupper($tx->estado ?? '');
+        $estaPagado = ($estadoActual === 'PAGADO');
+
+        if (!$estaPagado && !empty($tx->id_proforma)) {
+            $profCheck = $this->db->get_where('proformas', ['idproforma' => $tx->id_proforma])->row();
+            if ($profCheck && strtoupper($profCheck->estado ?? '') === 'PAGADO') {
+                $estaPagado = true;
+            }
+        }
+
+        if ($estaPagado) {
+            $this->db->where('alias', $alias)->update('bisa_qr_transacciones', ['estado' => 'PAGADO', 'fecha_pago' => date('Y-m-d H:i:s')]);
             return $this->output
                 ->set_content_type('application/json')
                 ->set_output(json_encode(['status' => 'PAGADO']));
