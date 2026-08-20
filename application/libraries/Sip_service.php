@@ -126,13 +126,28 @@ class Sip_service
             $expiresAtStr = date('Y-m-d H:i:s', time() + $validez);
 
             $CI =& get_instance();
-            if ($CI && $config) {
-                $CI->db->where('id', $config->id)->update('bisa_qr_config', [
-                    'api_url' => $this->apiUrl,
-                    'token' => $token,
-                    'token_expires_at' => $expiresAtStr,
-                    'updated_at' => date('Y-m-d H:i:s')
-                ]);
+            if ($CI) {
+                $checkDb = $CI->db->get_where('bisa_qr_config', ['id' => 1])->row();
+                if ($checkDb) {
+                    $CI->db->where('id', 1)->update('bisa_qr_config', [
+                        'api_url' => $this->apiUrl,
+                        'token' => $token,
+                        'token_expires_at' => $expiresAtStr,
+                        'updated_at' => date('Y-m-d H:i:s')
+                    ]);
+                } else {
+                    $CI->db->insert('bisa_qr_config', [
+                        'id' => 1,
+                        'api_key' => $this->apiKey,
+                        'service_key' => $this->serviceKey,
+                        'username' => $this->username,
+                        'password' => $this->password,
+                        'api_url' => $this->apiUrl,
+                        'token' => $token,
+                        'token_expires_at' => $expiresAtStr,
+                        'updated_at' => date('Y-m-d H:i:s')
+                    ]);
+                }
             }
         }
 
@@ -321,7 +336,8 @@ class Sip_service
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 6);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
 

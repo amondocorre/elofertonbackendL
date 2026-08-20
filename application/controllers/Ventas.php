@@ -2568,14 +2568,18 @@ class Ventas extends CI_Controller {
         }
 
         if (!$estaPagado) {
-            $this->load->library('sip_service');
-            $statusSip = $this->sip_service->checkStatus($alias);
-            if ($statusSip === 'PAGADO') {
-                $estaPagado = true;
-                $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
-                    'estado' => 'PAGADO',
-                    'fecha_pago' => date('Y-m-d H:i:s')
-                ]);
+            try {
+                $this->load->library('sip_service');
+                $statusSip = $this->sip_service->checkStatus($alias);
+                if ($statusSip === 'PAGADO') {
+                    $estaPagado = true;
+                    $this->db->where('alias', $alias)->update('bisa_qr_transacciones', [
+                        'estado' => 'PAGADO',
+                        'fecha_pago' => date('Y-m-d H:i:s')
+                    ]);
+                }
+            } catch (Exception $e) {
+                log_message('error', 'Error al consultar SIP BISA: ' . $e->getMessage());
             }
         }
 
