@@ -2533,6 +2533,15 @@ class Ventas extends CI_Controller {
     {
         $alias = $this->input->post('alias');
         if (empty($alias)) {
+            $alias = $this->input->get('alias');
+        }
+        if (empty($alias)) {
+            $rawInput = $this->input->raw_input_stream;
+            $data = json_decode($rawInput, true);
+            $alias = $data['alias'] ?? null;
+        }
+
+        if (empty($alias)) {
             return $this->output
                 ->set_status_header(400)
                 ->set_content_type('application/json')
