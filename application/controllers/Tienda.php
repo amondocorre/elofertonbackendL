@@ -138,13 +138,16 @@ class Tienda extends CI_Controller {
 
             $this->db->group_by('p.idprod');
 
-            // Ocultar productos con stock 0 si el usuario está logueado o si se solicita explícitamente
+            // Ocultar productos con stock 0 si el usuario está logueado o si se solicita explícitamente (salvo que se envíe incluir_sin_stock=1)
             $user_id_param = $this->input->get('user_id');
             $user_id_header = $this->input->get_request_header('X-User-Id', TRUE);
             $ocultar_sin_stock = $this->input->get('ocultar_sin_stock');
+            $incluir_sin_stock = $this->input->get('incluir_sin_stock');
 
-            if (!empty($vendedor_id) || !empty($user_id_param) || !empty($user_id_header) || $ocultar_sin_stock === '1' || $ocultar_sin_stock === 'true') {
-                $this->db->having('COALESCE(SUM(inventarios.cantidad), 0) > 0');
+            if ($incluir_sin_stock !== '1' && $incluir_sin_stock !== 'true') {
+                if (!empty($vendedor_id) || !empty($user_id_param) || !empty($user_id_header) || $ocultar_sin_stock === '1' || $ocultar_sin_stock === 'true') {
+                    $this->db->having('COALESCE(SUM(inventarios.cantidad), 0) > 0');
+                }
             }
 
             $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC', FALSE);
@@ -883,6 +886,167 @@ class Tienda extends CI_Controller {
             'proforma' => $proforma,
             'data' => $details
         ]);
+    }
+
+    /**
+     * Obtiene el stock por sucursal de un producto específico
+     * GET /tienda/stock_por_sucursal?idprod=X
+     */
+    public function stock_por_sucursal() {
+        $idprod = $this->input->get('idprod');
+        if (empty($idprod)) {
+            echo json_encode(['status' => 'error', 'error' => 'Código de producto requerido']);
+            return;
+        }
+
+        $this->db->select('i.deposito as sucursal_id, d.nombre as sucursal_nombre, COALESCE(SUM(i.cantidad), 0) as cantidad');
+        $this->db->from('inventarios i');
+        $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+        $this->db->where('i.idprod', $idprod);
+        $this->db->group_by('i.deposito');
+        $stocks = $this->db->get()->result();
+
+        echo json_encode([
+            'status' => 'success',
+            'data' => $stocks
+        ]);
+    }
+
+    /**
+     * Endpoint para acortar URL con redirección directa sin páginas intermedias
+     * POST /tienda/acortar_url
+     */
+    public function acortar_url() {
+        $url = $this->input->post('url');
+        if (empty($url)) {
+            $rawInput = json_decode(file_get_contents('php://input'), true);
+            $url = isset($rawInput['url']) ? $rawInput['url'] : '';
+        }
+
+        if (empty($url)) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['status' => 'error', 'message' => 'URL requerida']));
+        }
+
+        // Intento 1: is.gd (redirección 100% directa al producto sin intermediarios)
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, "https://is.gd/create.php?format=json&url=" . urlencode($url));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        if ($response) {
+            $json = json_decode($response, true);
+            if (!empty($json['shorturl'])) {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode(['status' => 'success', 'shorturl' => $json['shorturl']]));
+            }
+        }
+
+        // Intento 2: cleanuri.com (redirección directa limpia)
+        $ch2 = curl_init();
+        curl_setopt($ch2, CURLOPT_URL, "https://cleanuri.com/api/v1/shorten");
+        curl_setopt($ch2, CURLOPT_POST, true);
+        curl_setopt($ch2, CURLOPT_POSTFIELDS, http_build_query(['url' => $url]));
+        curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch2, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+        $response2 = curl_exec($ch2);
+        curl_close($ch2);
+
+        if ($response2) {
+            $json2 = json_decode($response2, true);
+            if (!empty($json2['result_url'])) {
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode(['status' => 'success', 'shorturl' => $json2['result_url']]));
+            }
+        }
+
+        // Intento 3: TinyURL directo
+        $ch3 = curl_init();
+        curl_setopt($ch3, CURLOPT_URL, "https://tinyurl.com/api-create.php?url=" . urlencode($url));
+        curl_setopt($ch3, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch3, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch3, CURLOPT_SSL_VERIFYPEER, false);
+        $response3 = curl_exec($ch3);
+        curl_close($ch3);
+
+        if ($response3 && strpos($response3, 'http') === 0) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['status' => 'success', 'shorturl' => trim($response3)]));
+        }
+
+        // Fallback: URL original funcional
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'shorturl' => $url]));
+    }
+
+    /**
+     * Obtiene el listado de productos con comisión ordenados de mayor a menor
+     * GET /tienda/top_comisiones?sucursal=1&q=...
+     */
+    public function top_comisiones() {
+        try {
+            $sucursal = $this->input->get('sucursal');
+            $q = $this->input->get('q');
+
+            $this->db->select('
+                COALESCE(MAX(i.id), MAX(p.id)) as id,
+                p.idprod,
+                MAX(p.descripcion) AS descripcion,
+                MAX(m.nombre) AS marca,
+                MAX(p.precioventa) AS precioventa,
+                COALESCE(MAX(p.comision), 0) AS comision,
+                NULLIF(MAX(p.imagen), "") AS imagen,
+                NULLIF(MAX(p.foto), "") AS foto,
+                COALESCE(SUM(i.cantidad), 0) AS cantidad,
+                MAX(d.nombre) AS sucursal_nombre,
+                COALESCE(MAX(i.deposito), 1) AS sucursal
+            ', FALSE);
+            $this->db->from('productos p');
+            $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+            $this->db->join('inventarios i', 'p.idprod = i.idprod', 'left');
+            $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+            $this->db->where('p.estado', 'Activo');
+            $this->db->where('COALESCE(p.comision, 0) >', 0);
+
+            if (!empty($sucursal) && $sucursal !== '0') {
+                $this->db->where('i.deposito', (int)$sucursal);
+            }
+
+            if (!empty($q)) {
+                $this->db->group_start();
+                $this->db->like('p.descripcion', $q);
+                $this->db->or_like('p.idprod', $q);
+                $this->db->or_like('m.nombre', $q);
+                $this->db->group_end();
+            }
+
+            $this->db->group_by('p.idprod');
+            $this->db->having('COALESCE(SUM(i.cantidad), 0) >', 0);
+            $this->db->order_by('COALESCE(MAX(p.comision), 0)', 'DESC');
+            $this->db->order_by('MAX(p.descripcion)', 'ASC');
+
+            $productos = $this->db->get()->result();
+
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'data' => $productos
+                ]));
+        } catch (Exception $e) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['status' => 'error', 'message' => $e->getMessage()]));
+        }
     }
 }
 

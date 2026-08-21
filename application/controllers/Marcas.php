@@ -81,6 +81,35 @@ class Marcas extends MY_Controller {
     }
 
     /**
+     * Muestra las marcas con la cantidad de productos en stock en todas las sucursales.
+     * GET /marcas/con_stock
+     */
+    public function con_stock() {
+        $sql = "SELECT COALESCE(NULLIF(TRIM(m.nombre), ''), '-SIN MARCA') as marca_nombre,
+                       COUNT(DISTINCT p.idprod) as cantidad_productos,
+                       SUM(inv.cantidad) as total_stock
+                FROM productos p
+                JOIN (
+                    SELECT idprod, SUM(cantidad) as cantidad 
+                    FROM inventarios 
+                    GROUP BY idprod 
+                    HAVING SUM(cantidad) > 0
+                ) inv ON p.idprod = inv.idprod
+                LEFT JOIN marcas m ON p.idmarca = m.id
+                WHERE p.estado = 'Activo'
+                GROUP BY marca_nombre
+                ORDER BY marca_nombre ASC";
+
+        $query = $this->db->query($sql);
+        $resultados = $query->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(200)
+            ->set_output(json_encode($resultados));
+    }
+
+    /**
      * Guarda o edita una marca con control de duplicidad por nombre.
      */
     public function guardar() {

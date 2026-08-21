@@ -98,10 +98,11 @@ class Comisiones extends MY_Controller {
 
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
-        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%d/%m/%Y %H:%i') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago", FALSE);
+        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago, vend.nombre as vendedor_nombre, vend.telefono as vendedor_telefono, v.cliente, v.telefono as cliente_telefono", FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)', 'left', FALSE);
         $this->db->join('proformas prof', 'CONVERT(v.idventa USING utf8mb4) = CONVERT(prof.idproforma USING utf8mb4) OR CONVERT(v.idventa USING utf8mb4) = CONVERT(prof.id USING utf8mb4) OR v.id = prof.id', 'left', FALSE);
+        $this->db->join('vendedores vend', $vendedor_expr . ' = vend.id', 'left', FALSE);
         $this->db->join('depositos d', 'v.idneg = d.id', 'left');
         $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
         $this->db->where($vendedor_expr . ' = ' . $this->db->escape((string)$vendedor_id), NULL, FALSE);
@@ -114,6 +115,39 @@ class Comisiones extends MY_Controller {
         }
 
         $this->db->order_by('v.fecha', 'DESC');
+
+        $query = $this->db->get();
+        $detalles = $query->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($detalles));
+    }
+
+    /**
+     * Muestra las ventas realizadas por encargados de tienda o sin vendedor asignado de todas las sucursales.
+     * GET /comisiones/ventas_sin_vendedor
+     */
+    public function ventas_sin_vendedor() {
+        $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
+
+        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, COALESCE(d.nombre, 'Sucursal') as sucursal_nombre, COALESCE(vend.nombre, v.cliente, 'ENCARGADO DE TIENDA') as encargado_nombre, COALESCE(vend.telefono, v.telefono, '') as encargado_telefono", FALSE);
+        $this->db->from('detalleventas dv');
+        $this->db->join('ventas v', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)', 'left', FALSE);
+        $this->db->join('vendedores vend', $vendedor_expr . ' = vend.id', 'left', FALSE);
+        $this->db->join('depositos d', 'v.idneg = d.id', 'left');
+        $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
+
+        // Filtrar ventas realizadas por encargados de tienda (recibe_comision = 0 o rol != vendedores)
+        $this->db->group_start();
+        $this->db->where('vend.recibe_comision', 0);
+        $this->db->or_where("TRIM(LOWER(vend.rol)) NOT IN ('vendedores', 'vendedor')", NULL, FALSE);
+        $this->db->or_where('vend.id IS NULL', NULL, FALSE);
+        $this->db->group_end();
+
+        $this->db->where('dv.comision >', 0);
+        $this->db->order_by('v.fecha', 'DESC');
+        $this->db->limit(500);
 
         $query = $this->db->get();
         $detalles = $query->result();
