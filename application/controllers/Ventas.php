@@ -1496,28 +1496,21 @@ class Ventas extends CI_Controller {
                         $pagoOtro = floatval($mix['tarjeta'] ?? 0) + floatval($mix['transferencia'] ?? 0) + floatval($mix['deposito'] ?? 0);
                     } else {
                         // Desglose en formato cadena de texto (ej: "EFECTIVO: 700.00 | TRANSFERENCIA: 499.00")
-                        if (preg_match('/EFECTIVO:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $pagoEfectivo = floatval($matches[1]);
+                        if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
+                            $pagoEfectivo = floatval(str_replace(',', '', $matches[1]));
                         }
                         
                         $otherPaymentSum = 0;
-                        if (preg_match('/TARJETA:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $otherPaymentSum += floatval($matches[1]);
-                        }
-                        if (preg_match('/TRANSFERENCIA:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $otherPaymentSum += floatval($matches[1]);
-                        }
-                        if (preg_match('/QR-MERCANTIL:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $otherPaymentSum += floatval($matches[1]);
-                        }
-                        if (preg_match('/QR-BCP:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $otherPaymentSum += floatval($matches[1]);
-                        }
-                        if (preg_match('/QR-BISA:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $otherPaymentSum += floatval($matches[1]);
-                        }
-                        if (preg_match('/DEPOSITO:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                            $otherPaymentSum += floatval($matches[1]);
+                        $partes = explode('|', $s->pagomixto);
+                        foreach ($partes as $parte) {
+                            if (strpos($parte, ':') !== false) {
+                                list($key, $val) = explode(':', $parte, 2);
+                                $keyTrim = strtoupper(trim($key));
+                                if ($keyTrim !== 'EFECTIVO') {
+                                    $valClean = floatval(str_replace(',', '', trim($val)));
+                                    $otherPaymentSum += $valClean;
+                                }
+                            }
                         }
                         $pagoOtro = $otherPaymentSum;
                     }

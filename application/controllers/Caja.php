@@ -93,8 +93,8 @@ class Caja extends CI_Controller {
                     $cashPaid = floatval($mix['efectivo'] ?? 0);
                 } else {
                     // Desglose en formato cadena de texto (ej: "EFECTIVO: 700.00 | TRANSFERENCIA: 499.00")
-                    if (preg_match('/EFECTIVO:\s*([0-9.]+)/i', $s->pagomixto, $matches)) {
-                        $cashPaid = floatval($matches[1]);
+                    if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
+                        $cashPaid = floatval(str_replace(',', '', $matches[1]));
                     }
                 }
             } else if (strtolower($s->formapago) === 'efectivo') {
