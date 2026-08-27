@@ -85,19 +85,17 @@ class Caja extends CI_Controller {
             $transportPrice = floatval($s->precio_transporte ?? 0);
             $productTotal = floatval($s->total);
 
-            // Verificar si la forma de pago contiene 'MIXTO' y el desglose de pago mixto no esta vacio
-            if ((stripos($s->formapago, 'MIXTO') !== false || $s->formapago === 'mixto') && !empty($s->pagomixto)) {
+            // Verificar si la forma de pago es mixta o si posee desglose en pagomixto
+            if (!empty($s->pagomixto)) {
                 $mix = json_decode($s->pagomixto, true);
                 if (is_array($mix)) {
-                    // Desglose en formato JSON estructurado
                     $cashPaid = floatval($mix['efectivo'] ?? 0);
                 } else {
-                    // Desglose en formato cadena de texto (ej: "EFECTIVO: 700.00 | TRANSFERENCIA: 499.00")
                     if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
                         $cashPaid = floatval(str_replace(',', '', $matches[1]));
                     }
                 }
-            } else if (strtolower($s->formapago) === 'efectivo') {
+            } else if (stripos($s->formapago, 'efectivo') !== false || strtolower($s->formapago) === 'efectivo') {
                 $cashPaid = $productTotal;
             } else {
                 $cashPaid = 0.0;
@@ -364,7 +362,7 @@ class Caja extends CI_Controller {
                 $transportPrice = floatval($s->precio_transporte ?? 0);
                 $productTotal = floatval($s->total);
 
-                if ((stripos($s->formapago, 'MIXTO') !== false || $s->formapago === 'mixto') && !empty($s->pagomixto)) {
+                if (!empty($s->pagomixto)) {
                     $mix = json_decode($s->pagomixto, true);
                     if (is_array($mix)) {
                         $cashPaid = floatval($mix['efectivo'] ?? 0);
@@ -374,7 +372,7 @@ class Caja extends CI_Controller {
                             $cashPaid = floatval($cleanValue);
                         }
                     }
-                } else if (strtolower($s->formapago) === 'efectivo') {
+                } else if (stripos($s->formapago, 'efectivo') !== false || strtolower($s->formapago) === 'efectivo') {
                     $cashPaid = $productTotal;
                 }
 

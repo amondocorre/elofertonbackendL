@@ -1487,8 +1487,8 @@ class Ventas extends CI_Controller {
                 $precioTransporte = floatval($s->precio_transporte ?? 0);
                 $totalProductos = floatval($s->total);
                 
-                // Verificar si la forma de pago contiene 'MIXTO' y el desglose de pago mixto no esta vacio
-                if ((stripos($s->formapago, 'MIXTO') !== false || $s->formapago === 'mixto') && !empty($s->pagomixto)) {
+                // Verificar si posee desglose en pagomixto o si la forma de pago es mixta
+                if (!empty($s->pagomixto)) {
                     $mix = json_decode($s->pagomixto, true);
                     if (is_array($mix)) {
                         // Desglose en formato JSON estructurado
@@ -1514,7 +1514,7 @@ class Ventas extends CI_Controller {
                         }
                         $pagoOtro = $otherPaymentSum;
                     }
-                } else if (strtolower($s->formapago) === 'efectivo') {
+                } else if (stripos($s->formapago, 'efectivo') !== false || strtolower($s->formapago) === 'efectivo') {
                     $pagoEfectivo = $totalProductos;
                 } else {
                     $pagoOtro = $totalProductos;
