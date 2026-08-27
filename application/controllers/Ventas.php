@@ -1492,12 +1492,23 @@ class Ventas extends CI_Controller {
                     $mix = json_decode($s->pagomixto, true);
                     if (is_array($mix)) {
                         // Desglose en formato JSON estructurado
-                        $pagoEfectivo = floatval($mix['efectivo'] ?? 0);
-                        $pagoOtro = floatval($mix['tarjeta'] ?? 0) + floatval($mix['transferencia'] ?? 0) + floatval($mix['deposito'] ?? 0);
+                        $pagoEfectivo = floatval($mix['efectivo'] ?? $mix['EFECTIVO'] ?? 0);
+                        $pagoOtro = floatval($mix['tarjeta'] ?? $mix['TARJETA'] ?? 0) + floatval($mix['transferencia'] ?? $mix['TRANSFERENCIA'] ?? 0) + floatval($mix['deposito'] ?? $mix['DEPOSITO'] ?? 0);
                     } else {
                         // Desglose en formato cadena de texto (ej: "EFECTIVO: 700.00 | TRANSFERENCIA: 499.00")
                         if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
                             $pagoEfectivo = floatval(str_replace(',', '', $matches[1]));
+                        } else {
+                            $partesPrev = explode('|', $s->pagomixto);
+                            foreach ($partesPrev as $pPrev) {
+                                if (strpos($pPrev, ':') !== false) {
+                                    list($kP, $vP) = explode(':', $pPrev, 2);
+                                    if (stripos(trim($kP), 'efectivo') !== false) {
+                                        $pagoEfectivo = floatval(str_replace(',', '', trim($vP)));
+                                        break;
+                                    }
+                                }
+                            }
                         }
                         
                         $otherPaymentSum = 0;
@@ -1506,7 +1517,7 @@ class Ventas extends CI_Controller {
                             if (strpos($parte, ':') !== false) {
                                 list($key, $val) = explode(':', $parte, 2);
                                 $keyTrim = strtoupper(trim($key));
-                                if ($keyTrim !== 'EFECTIVO') {
+                                if (stripos($keyTrim, 'EFECTIVO') === false) {
                                     $valClean = floatval(str_replace(',', '', trim($val)));
                                     $otherPaymentSum += $valClean;
                                 }

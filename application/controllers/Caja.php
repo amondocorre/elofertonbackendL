@@ -89,10 +89,21 @@ class Caja extends CI_Controller {
             if (!empty($s->pagomixto)) {
                 $mix = json_decode($s->pagomixto, true);
                 if (is_array($mix)) {
-                    $cashPaid = floatval($mix['efectivo'] ?? 0);
+                    $cashPaid = floatval($mix['efectivo'] ?? $mix['EFECTIVO'] ?? 0);
                 } else {
                     if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
                         $cashPaid = floatval(str_replace(',', '', $matches[1]));
+                    } else {
+                        $partes = explode('|', $s->pagomixto);
+                        foreach ($partes as $parte) {
+                            if (strpos($parte, ':') !== false) {
+                                list($k, $v) = explode(':', $parte, 2);
+                                if (stripos(trim($k), 'efectivo') !== false) {
+                                    $cashPaid = floatval(str_replace(',', '', trim($v)));
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             } else if (stripos($s->formapago, 'efectivo') !== false || strtolower($s->formapago) === 'efectivo') {
@@ -365,11 +376,23 @@ class Caja extends CI_Controller {
                 if (!empty($s->pagomixto)) {
                     $mix = json_decode($s->pagomixto, true);
                     if (is_array($mix)) {
-                        $cashPaid = floatval($mix['efectivo'] ?? 0);
+                        $cashPaid = floatval($mix['efectivo'] ?? $mix['EFECTIVO'] ?? 0);
                     } else {
                         if (preg_match('/EFECTIVO:\s*([\d,.]+)/i', $s->pagomixto, $matches)) {
                             $cleanValue = str_replace(',', '', $matches[1]);
                             $cashPaid = floatval($cleanValue);
+                        } else {
+                            // Fallback por si la cadena contiene partes separadas por |
+                            $partes = explode('|', $s->pagomixto);
+                            foreach ($partes as $parte) {
+                                if (strpos($parte, ':') !== false) {
+                                    list($k, $v) = explode(':', $parte, 2);
+                                    if (stripos(trim($k), 'efectivo') !== false) {
+                                        $cashPaid = floatval(str_replace(',', '', trim($v)));
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
                 } else if (stripos($s->formapago, 'efectivo') !== false || strtolower($s->formapago) === 'efectivo') {
