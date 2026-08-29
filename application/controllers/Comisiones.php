@@ -245,12 +245,14 @@ class Comisiones extends MY_Controller {
                 }
             }
 
+            $tipo_pago = $es_bmsc ? '1' : '3';
+
             $items_csv[] = [
                 'ci_nit'              => $v_row->carnet ?? '',
                 'nombre_beneficiario' => $v_row->nombre ?? '',
                 'cuenta_bmsc'         => $cuenta_bmsc,
                 'fecha_pago'          => date('d/m/Y', strtotime($fecha_generacion)),
-                'tipo_pago'           => '3',
+                'tipo_pago'           => $tipo_pago,
                 'importe'             => number_format(floatval($v['monto']), 2, '.', ''),
                 'codigo_otro_banco'   => $codigo_otro_banco,
                 'cuenta_otro_banco'   => $cuenta_otro_banco,
