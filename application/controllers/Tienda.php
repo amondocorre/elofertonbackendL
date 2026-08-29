@@ -964,36 +964,17 @@ class Tienda extends CI_Controller {
             return;
         }
 
+        // Obtener detalles de la proforma relacionando detalleproformas.idprod -> inventarios.id -> productos.idprod
         $this->db->select('
-            dp.*, 
-            COALESCE(
-                NULLIF(p.idprod, ""),
-                NULLIF(p2.idprod, ""),
-                NULLIF(p3.idprod, ""),
-                NULLIF(p4.idprod, ""),
-                (SELECT p_sub.idprod FROM productos p_sub WHERE p_sub.id = dp.idprod LIMIT 1),
-                (SELECT inv_sub.idprod FROM inventarios inv_sub WHERE inv_sub.id = dp.idprod LIMIT 1),
-                (SELECT p_desc.idprod FROM productos p_desc WHERE p_desc.descripcion = dp.descripcion LIMIT 1),
-                dp.idprod
-            ) as codigo_producto,
-            COALESCE(
-                NULLIF(p.imagen, ""),
-                NULLIF(p2.imagen, ""),
-                NULLIF(p3.imagen, ""),
-                NULLIF(p4.imagen, ""),
-                (SELECT p_sub.imagen FROM productos p_sub WHERE p_sub.id = dp.idprod LIMIT 1),
-                (SELECT p_inv.imagen FROM inventarios inv_sub JOIN productos p_inv ON inv_sub.idprod = p_inv.idprod WHERE inv_sub.id = dp.idprod LIMIT 1),
-                (SELECT p_desc.imagen FROM productos p_desc WHERE p_desc.descripcion = dp.descripcion LIMIT 1)
-            ) as imagen
+            dp.*,
+            COALESCE(inv.idprod, p_directo.idprod, dp.idprod) as codigo_producto,
+            COALESCE(NULLIF(p.imagen, ""), NULLIF(p_directo.imagen, "")) as imagen
         ', FALSE);
         $this->db->from('detalleproformas dp');
-        $this->db->join('productos p', 'dp.idprod = p.idprod', 'left');
-        $this->db->join('productos p2', 'dp.idprod = p2.id', 'left');
         $this->db->join('inventarios inv', 'dp.idprod = inv.id', 'left');
-        $this->db->join('productos p3', 'inv.idprod = p3.idprod', 'left');
-        $this->db->join('productos p4', 'TRIM(dp.descripcion) COLLATE utf8mb3_general_ci = TRIM(p4.descripcion) COLLATE utf8mb3_general_ci', 'left', FALSE);
+        $this->db->join('productos p', 'inv.idprod = p.idprod', 'left');
+        $this->db->join('productos p_directo', 'dp.idprod = p_directo.idprod', 'left');
         $this->db->where('dp.idproforma', $proformaId);
-        $this->db->group_by('dp.id, dp.idproforma, dp.idprod, dp.descripcion, dp.cuantos, dp.preciolocal, dp.precioventa, dp.preciofinal, dp.vendedor, dp.comision, p.idprod, p2.idprod, p3.idprod, p4.idprod, p.imagen, p2.imagen, p3.imagen, p4.imagen');
         $details = $this->db->get()->result();
 
         echo json_encode([
