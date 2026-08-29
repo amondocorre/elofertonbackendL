@@ -922,7 +922,7 @@ class Tienda extends CI_Controller {
             return;
         }
 
-        $this->db->select('p.id, p.idproforma, p.fecha, p.fecha_venta, p.cliente, p.nit, p.telefono, p.total, p.estado, p.formapago, MAX(d.nombre) AS sucursal_nombre, MAX(qr.alias) AS qr_alias, MAX(qr.qr_base64) AS qr_base64');
+        $this->db->select('p.id, p.idproforma, p.fecha, p.fecha_venta, p.cliente, p.nit, p.telefono, p.total, p.estado, p.formapago, p.comentario, MAX(d.nombre) AS sucursal_nombre, MAX(qr.alias) AS qr_alias, MAX(qr.qr_base64) AS qr_base64');
         $this->db->from('proformas p');
         $this->db->join('depositos d', 'p.idneg = d.id', 'left');
         $this->db->join('bisa_qr_transacciones qr', 'p.idproforma = qr.id_proforma', 'left');
