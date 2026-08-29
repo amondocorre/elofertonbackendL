@@ -966,17 +966,17 @@ class Tienda extends CI_Controller {
 
         $this->db->select('
             dp.*, 
-            COALESCE(p.idprod, p2.idprod, p3.idprod, p4.idprod, dp.idprod) as codigo_producto,
-            COALESCE(NULLIF(p.imagen, ""), NULLIF(p2.imagen, ""), NULLIF(p3.imagen, ""), NULLIF(p4.imagen, "")) as imagen
+            COALESCE(MAX(p.idprod), MAX(p2.idprod), MAX(p3.idprod), MAX(p4.idprod), dp.idprod) as codigo_producto,
+            COALESCE(NULLIF(MAX(p.imagen), ""), NULLIF(MAX(p2.imagen), ""), NULLIF(MAX(p3.imagen), ""), NULLIF(MAX(p4.imagen), "")) as imagen
         ', FALSE);
         $this->db->from('detalleproformas dp');
         $this->db->join('productos p', 'dp.idprod = p.idprod', 'left');
         $this->db->join('productos p2', 'dp.idprod = p2.id', 'left');
         $this->db->join('inventarios inv', 'dp.idprod = inv.id', 'left');
         $this->db->join('productos p3', 'inv.idprod = p3.idprod', 'left');
-        $this->db->join('productos p4', 'TRIM(dp.descripcion) = TRIM(p4.descripcion)', 'left');
+        $this->db->join('productos p4', 'TRIM(dp.descripcion) COLLATE utf8mb3_general_ci = TRIM(p4.descripcion) COLLATE utf8mb3_general_ci', 'left', FALSE);
         $this->db->where('dp.idproforma', $proformaId);
-        $this->db->group_by('dp.id');
+        $this->db->group_by('dp.id, dp.idproforma, dp.idprod, dp.descripcion, dp.cuantos, dp.preciolocal, dp.precioventa, dp.preciofinal, dp.vendedor, dp.comision');
         $details = $this->db->get()->result();
 
         echo json_encode([
