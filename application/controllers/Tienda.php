@@ -111,10 +111,10 @@ class Tienda extends CI_Controller {
                 }
             }
 
-            // Obtener subcategorías únicas
+            // Obtener subcategorías únicas (agrupando para evitar nombres repetidos)
             $subcategorias = [];
             if ($this->db->table_exists('subcategoria') && $this->db->table_exists('productos')) {
-                $this->db->select('sc.nombre as subcategoria, c.descripcion as categoria');
+                $this->db->select('sc.nombre as subcategoria, MAX(c.descripcion) as categoria');
                 $this->db->from('productos p');
                 $this->db->join('subcategoria sc', 'p.idsubcategoria = sc.idsubcategoria', 'inner');
                 $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
@@ -122,7 +122,7 @@ class Tienda extends CI_Controller {
                 if ($is_vendedor) {
                     $this->db->where('p.comision >', 0);
                 }
-                $this->db->distinct();
+                $this->db->group_by('sc.nombre');
                 $this->db->order_by('sc.nombre', 'ASC');
                 $subcat_res = $this->db->get()->result_array();
                 foreach ($subcat_res as $scr) {
@@ -966,14 +966,17 @@ class Tienda extends CI_Controller {
 
         $this->db->select('
             dp.*, 
-            COALESCE(p.imagen, p2.imagen, p3.imagen) as imagen
+            COALESCE(p.idprod, p2.idprod, p3.idprod, p4.idprod, dp.idprod) as codigo_producto,
+            COALESCE(NULLIF(p.imagen, ""), NULLIF(p2.imagen, ""), NULLIF(p3.imagen, ""), NULLIF(p4.imagen, "")) as imagen
         ', FALSE);
         $this->db->from('detalleproformas dp');
         $this->db->join('productos p', 'dp.idprod = p.idprod', 'left');
         $this->db->join('productos p2', 'dp.idprod = p2.id', 'left');
         $this->db->join('inventarios inv', 'dp.idprod = inv.id', 'left');
         $this->db->join('productos p3', 'inv.idprod = p3.idprod', 'left');
+        $this->db->join('productos p4', 'TRIM(dp.descripcion) = TRIM(p4.descripcion)', 'left');
         $this->db->where('dp.idproforma', $proformaId);
+        $this->db->group_by('dp.id');
         $details = $this->db->get()->result();
 
         echo json_encode([
