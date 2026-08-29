@@ -32,6 +32,8 @@ class Tienda extends CI_Controller {
             }
             $q = $this->input->get('q');
             $marca = $this->input->get('marca');
+            $categoria = $this->input->get('categoria');
+            $subcategoria = $this->input->get('subcategoria');
             $vendedor_id = $this->input->get('vendedor_id');
 
             // Check if the vendedor is valid
@@ -72,6 +74,9 @@ class Tienda extends CI_Controller {
                 $this->db->join('marcas m', 'p.idmarca = m.id', 'inner');
                 $this->db->join('inventarios i', 'p.idprod = i.idprod', 'left');
                 $this->db->where('p.estado', 'Activo');
+                if ($is_vendedor) {
+                    $this->db->where('p.comision >', 0);
+                }
                 $this->db->distinct();
                 $this->db->order_by('m.nombre', 'ASC');
                 $marcas_result = $this->db->get()->result_array();
@@ -86,26 +91,73 @@ class Tienda extends CI_Controller {
                 }
             }
 
+            // Obtener categorías únicas
+            $categorias = [];
+            if ($this->db->table_exists('categoria_producto') && $this->db->table_exists('productos')) {
+                $this->db->select('c.descripcion as categoria');
+                $this->db->from('productos p');
+                $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'inner');
+                $this->db->where('p.estado', 'Activo');
+                if ($is_vendedor) {
+                    $this->db->where('p.comision >', 0);
+                }
+                $this->db->distinct();
+                $this->db->order_by('c.descripcion', 'ASC');
+                $cat_res = $this->db->get()->result_array();
+                foreach ($cat_res as $cr) {
+                    if (!empty($cr['categoria'])) {
+                        $categorias[] = $cr['categoria'];
+                    }
+                }
+            }
+
+            // Obtener subcategorías únicas
+            $subcategorias = [];
+            if ($this->db->table_exists('subcategoria') && $this->db->table_exists('productos')) {
+                $this->db->select('sc.nombre as subcategoria, c.descripcion as categoria');
+                $this->db->from('productos p');
+                $this->db->join('subcategoria sc', 'p.idsubcategoria = sc.idsubcategoria', 'inner');
+                $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
+                $this->db->where('p.estado', 'Activo');
+                if ($is_vendedor) {
+                    $this->db->where('p.comision >', 0);
+                }
+                $this->db->distinct();
+                $this->db->order_by('sc.nombre', 'ASC');
+                $subcat_res = $this->db->get()->result_array();
+                foreach ($subcat_res as $scr) {
+                    if (!empty($scr['subcategoria'])) {
+                        $subcategorias[] = [
+                            'nombre' => $scr['subcategoria'],
+                            'categoria' => $scr['categoria'] ?? ''
+                        ];
+                    }
+                }
+            }
+
             // Campos base: JOIN con tabla 'inventarios' para obtener stock y precio por sucursal
             $select_fields = '
                 COALESCE(MAX(inventarios.id), MAX(p.id)) as id,
                 p.idprod,
                 MAX(p.descripcion) AS descripcion,
                 MAX(c.descripcion) AS categoria,
+                MAX(sc.nombre) AS subcategoria,
                 MAX(m.nombre) AS marca,
                 MAX(p.idcategoria) AS idcategoria,
+                MAX(p.idsubcategoria) AS idsubcategoria,
                 MAX(p.idmarca) AS idmarca,
                 COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), "unid") AS unidad,
                 MAX(p.precioventa) AS precioventa,
                 COALESCE(NULLIF(MAX(inventarios.preciolocal), 0), MAX(p.preciolocal), 0) AS preciolocal,
                 MAX(p.nuevoprecio) AS preciomayor,
                 COALESCE(MAX(inventarios.deposito), 1) AS sucursal,
+                COALESCE(MAX(dep.nombre), "Sucursal 1") AS sucursal_nombre,
                 COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
-                NULLIF(MAX(p.imagen), "") AS imagen
+                NULLIF(MAX(p.imagen), "") AS imagen,
+                COALESCE(MAX(p.comision), 0) AS comision
             ';
             
             if ($is_vendedor) {
-                $select_fields .= ', COALESCE(MAX(p.comision), 0) AS comision';
                 if ($this->db->table_exists('vendedor_favoritos')) {
                     $select_fields .= ', MAX((SELECT COUNT(*) FROM vendedor_favoritos WHERE id_producto = COALESCE(inventarios.id, p.id) AND id_vendedor = ' . (int)$vendedor_id . ')) as is_favorito';
                 } else {
@@ -120,12 +172,34 @@ class Tienda extends CI_Controller {
             } else {
                 $this->db->join('inventarios', 'p.idprod = inventarios.idprod AND inventarios.deposito = 1', 'left', FALSE);
             }
+            $this->db->join('depositos dep', 'inventarios.deposito = dep.id', 'left', FALSE);
             $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left', FALSE);
+            $this->db->join('subcategoria sc', 'p.idsubcategoria = sc.idsubcategoria', 'left', FALSE);
             $this->db->join('marcas m', 'p.idmarca = m.id', 'left', FALSE);
             $this->db->where('p.estado', 'Activo');
 
             if (!empty($marca) && $marca !== 'Todas') {
-                $this->db->where('m.nombre', $marca);
+                $marcas_arr = is_array($marca) ? $marca : explode(',', $marca);
+                $marcas_arr = array_filter(array_map('trim', $marcas_arr));
+                if (!empty($marcas_arr) && !in_array('Todas', $marcas_arr)) {
+                    $this->db->where_in('m.nombre', $marcas_arr);
+                }
+            }
+
+            if (!empty($categoria) && $categoria !== 'Todas') {
+                $cats_arr = is_array($categoria) ? $categoria : explode(',', $categoria);
+                $cats_arr = array_filter(array_map('trim', $cats_arr));
+                if (!empty($cats_arr) && !in_array('Todas', $cats_arr)) {
+                    $this->db->where_in('c.descripcion', $cats_arr);
+                }
+            }
+
+            if (!empty($subcategoria) && $subcategoria !== 'Todas') {
+                $subcats_arr = is_array($subcategoria) ? $subcategoria : explode(',', $subcategoria);
+                $subcats_arr = array_filter(array_map('trim', $subcats_arr));
+                if (!empty($subcats_arr) && !in_array('Todas', $subcats_arr)) {
+                    $this->db->where_in('sc.nombre', $subcats_arr);
+                }
             }
 
             if (!empty($q)) {
@@ -133,6 +207,9 @@ class Tienda extends CI_Controller {
                 $this->db->group_start();
                 $this->db->like('p.descripcion', $search_escaped, 'both', FALSE);
                 $this->db->or_like('p.idprod', $search_escaped, 'both', FALSE);
+                $this->db->or_like('m.nombre', $search_escaped, 'both', FALSE);
+                $this->db->or_like('c.descripcion', $search_escaped, 'both', FALSE);
+                $this->db->or_like('sc.nombre', $search_escaped, 'both', FALSE);
                 $this->db->group_end();
             }
 
@@ -151,6 +228,8 @@ class Tienda extends CI_Controller {
             }
 
             $this->db->order_by('CASE WHEN COALESCE(SUM(inventarios.cantidad), 0) > 0 THEN 1 ELSE 2 END', 'ASC', FALSE);
+            $this->db->order_by('CASE WHEN COALESCE(MAX(p.comision), 0) > 0 THEN 1 ELSE 2 END', 'ASC', FALSE);
+            $this->db->order_by('COALESCE(MAX(p.comision), 0)', 'DESC', FALSE);
             $this->db->order_by('MAX(p.descripcion)', 'ASC', FALSE);
 
             $this->db->limit(1000); // Límite amplio para ver todos los productos sin crashear
@@ -279,7 +358,9 @@ class Tienda extends CI_Controller {
                 ->set_output(json_encode([
                     'status' => 'success',
                     'data' => $productos,
-                    'marcas' => $marcas
+                    'marcas' => $marcas,
+                    'categorias' => $categorias,
+                    'subcategorias' => $subcategorias
                 ]));
         } catch (\Throwable $e) {
             return $this->output
@@ -870,16 +951,30 @@ class Tienda extends CI_Controller {
         }
 
         // Validar proforma y que pertenezca al vendedor
-        $this->db->where('idproforma', $proformaId);
-        $this->db->where('vendedor', $sellerId);
-        $proforma = $this->db->get('proformas')->row();
+        $this->db->select('p.*, d.nombre as sucursal_nombre, v.nombre as vendedor_nombre, v.telefono as vendedor_telefono, v.telefono as vendedor_celular');
+        $this->db->from('proformas p');
+        $this->db->join('depositos d', 'p.idneg = d.id', 'left');
+        $this->db->join('vendedores v', 'p.vendedor = v.id', 'left');
+        $this->db->where('p.idproforma', $proformaId);
+        $this->db->where('p.vendedor', $sellerId);
+        $proforma = $this->db->get()->row();
 
         if (!$proforma) {
             echo json_encode(['status' => 'error', 'error' => 'Proforma no encontrada o no pertenece al vendedor']);
             return;
         }
 
-        $details = $this->db->where('idproforma', $proformaId)->get('detalleproformas')->result();
+        $this->db->select('
+            dp.*, 
+            COALESCE(p.imagen, p2.imagen, p3.imagen) as imagen
+        ', FALSE);
+        $this->db->from('detalleproformas dp');
+        $this->db->join('productos p', 'dp.idprod = p.idprod', 'left');
+        $this->db->join('productos p2', 'dp.idprod = p2.id', 'left');
+        $this->db->join('inventarios inv', 'dp.idprod = inv.id', 'left');
+        $this->db->join('productos p3', 'inv.idprod = p3.idprod', 'left');
+        $this->db->where('dp.idproforma', $proformaId);
+        $details = $this->db->get()->result();
 
         echo json_encode([
             'status' => 'success',

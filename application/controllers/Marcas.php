@@ -96,7 +96,7 @@ class Marcas extends MY_Controller {
                     HAVING SUM(cantidad) > 0
                 ) inv ON p.idprod = inv.idprod
                 LEFT JOIN marcas m ON p.idmarca = m.id
-                WHERE p.estado = 'Activo'
+                WHERE p.estado = 'Activo' AND COALESCE(p.comision, 0) > 0
                 GROUP BY marca_nombre
                 ORDER BY marca_nombre ASC";
 
@@ -107,6 +107,66 @@ class Marcas extends MY_Controller {
             ->set_content_type('application/json')
             ->set_status_header(200)
             ->set_output(json_encode($resultados));
+    }
+
+    /**
+     * Muestra los productos de una marca específica desglosados por sucursal/almacén (solo con comisión y stock > 0).
+     * GET /marcas/productos?marca=Truper
+     */
+    public function productos() {
+        $marca = $this->input->get('marca');
+        if (empty($marca)) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(400)
+                ->set_output(json_encode(['error' => 'La marca es requerida']));
+        }
+
+        $this->db->select("
+            i.id,
+            p.idprod,
+            p.descripcion,
+            m.nombre as marca,
+            COALESCE(i.unidad, p.subunidad, 'unid') as unidad,
+            p.precioventa,
+            COALESCE(NULLIF(i.preciolocal, 0), p.preciolocal, 0) as preciolocal,
+            i.deposito as sucursal,
+            COALESCE(d.nombre, CONCAT('Sucursal ', i.deposito)) as sucursal_nombre,
+            i.cantidad,
+            NULLIF(p.imagen, '') as imagen,
+            COALESCE(p.comision, 0) as comision
+        ", FALSE);
+        $this->db->from('productos p');
+        $this->db->join('inventarios i', 'p.idprod = i.idprod', 'inner');
+        $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+        $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+        $this->db->where('p.estado', 'Activo');
+        $this->db->where('COALESCE(p.comision, 0) >', 0);
+        $this->db->where('i.cantidad >', 0);
+
+        if ($marca === '-SIN MARCA') {
+            $this->db->group_start();
+            $this->db->where('p.idmarca IS NULL', NULL, FALSE);
+            $this->db->or_where('p.idmarca', 0);
+            $this->db->or_where("TRIM(m.nombre) =", '');
+            $this->db->group_end();
+        } else {
+            $this->db->where('m.nombre', $marca);
+        }
+
+        $this->db->order_by('p.descripcion', 'ASC');
+        $this->db->order_by('d.nombre', 'ASC');
+
+        $query = $this->db->get();
+        $productos = $query->result();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(200)
+            ->set_output(json_encode([
+                'status' => 'success',
+                'data'   => $productos
+            ]));
     }
 
     /**

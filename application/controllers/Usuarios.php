@@ -47,6 +47,15 @@ class Usuarios extends CI_Controller {
             ->set_output(json_encode($depositos));
     }
 
+    // Obtener la lista de bancos disponibles desde la tabla bancos
+    public function bancos() {
+        $this->load->model('Banco_model');
+        $bancos = $this->Banco_model->get_bancos();
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode($bancos));
+    }
+
     // Guardar (Crear o Actualizar) usuario
     public function guardar() {
         $data = json_decode(file_get_contents('php://input'), true);
@@ -249,7 +258,7 @@ class Usuarios extends CI_Controller {
      */
     public function detalles_accesos() {
         $userId = $this->input->get('id');
-        if (!$userId) {
+        if ($userId === null || $userId === '') {
             return $this->output
                 ->set_status_header(400)
                 ->set_content_type('application/json')

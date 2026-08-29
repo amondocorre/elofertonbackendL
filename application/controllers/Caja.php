@@ -345,8 +345,8 @@ class Caja extends CI_Controller {
                               ->from('ventas v')
                               ->join('ventatransporte vt', 'v.idventa = vt.idventa', 'left')
                               ->where('v.idusr', $c->usuario_id)
-                              ->where('DATE(v.fecha) >=', date('Y-m-d', strtotime($c->fecha_apertura)))
-                              ->where('DATE(v.fecha) <=', date('Y-m-d', strtotime($fecha_fin)))
+                              ->where('v.fecha >=', $c->fecha_apertura)
+                              ->where('v.fecha <=', $fecha_fin)
                               ->where('(v.estado IS NULL OR v.estado != "ANULADO")')
                               ->get()
                               ->result();

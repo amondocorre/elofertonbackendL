@@ -172,11 +172,12 @@ class Productos extends MY_Controller {
             }
             
             $ext = strtolower(pathinfo($_FILES['imagen_file']['name'], PATHINFO_EXTENSION));
-            if ($ext !== 'png') {
+            $allowed_exts = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+            if (!in_array($ext, $allowed_exts)) {
                 return $this->output
                     ->set_content_type('application/json')
                     ->set_status_header(400)
-                    ->set_output(json_encode(['error' => 'Solo se admiten imágenes en formato PNG.']));
+                    ->set_output(json_encode(['error' => 'Solo se admiten imágenes en formato PNG, JPG, JPEG o WEBP.']));
             }
 
             $safe_idprod = str_replace('/', '-', $idprod);
@@ -184,8 +185,8 @@ class Productos extends MY_Controller {
             $new_filename = $safe_idprod . '.' . $ext;
 
             $config['upload_path'] = $upload_path;
-            $config['allowed_types'] = 'png';
-            $config['max_size'] = 500; // 500 KB
+            $config['allowed_types'] = '*'; // Permitir todos los tipos para evitar fallos de MIME en CI3
+            $config['max_size'] = 5120; // 5 MB
             $config['file_name'] = $new_filename;
             $config['overwrite'] = TRUE;
 

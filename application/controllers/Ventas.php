@@ -775,7 +775,7 @@ class Ventas extends CI_Controller {
         $cliente = $this->input->get('cliente');
         $producto = $this->input->get('producto');
 
-        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, COALESCE(i.idprod, p_old.idprod, dv.idprod) AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, COALESCE(m_inv.nombre, m_p.nombre, m_p_old.nombre, NULLIF(i.marca, ""), NULLIF(p.marca, ""), NULLIF(p_old.marca, ""), "Sin Marca") AS marca, COALESCE(i.idmarca, p.idmarca, p_old.idmarca, 0) AS idmarca, COALESCE(pr_inv.nombre, pr_p.nombre, pr_p_old.nombre, NULLIF(i.proveedor, ""), NULLIF(p.proveedor, ""), NULLIF(p_old.proveedor, ""), "Sin Proveedor") AS proveedor, COALESCE(i.proveedor, p.proveedor, p_old.proveedor, 0) AS idproveedor, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion, dv.comision AS comision_pagada, COALESCE(p.comision, p_old.comision) AS comision_producto');
+        $this->db->select('v.id AS nro_venta, v.idventa, v.fecha, v.cliente, v.nit, v.comentario, v.formapago, v.pagomixto, d.nombre AS sucursal, u.nombre AS vendedor_nombre, COALESCE(i.idprod, p_old.idprod, dv.idprod) AS codigoprod, dv.idprod AS codigo, dv.descripcion AS producto, COALESCE(m_inv.nombre, m_p.nombre, m_p_old.nombre, NULLIF(i.marca, ""), NULLIF(p.marca, ""), NULLIF(p_old.marca, ""), "Sin Marca") AS marca, COALESCE(i.idmarca, p.idmarca, p_old.idmarca, 0) AS idmarca, COALESCE(pr_inv.nombre, pr_p.nombre, pr_p_old.nombre, NULLIF(i.proveedor, ""), NULLIF(p.proveedor, ""), NULLIF(p_old.proveedor, ""), "Sin Proveedor") AS proveedor, COALESCE(i.proveedor, p.proveedor, p_old.proveedor, 0) AS idproveedor, dv.cuantos AS cantidad, dv.preciolocal AS precio_compra, dv.precioventa AS precio_unitario, (dv.cuantos * dv.precioventa) AS subtotal, v.estado, v.motivo_anulacion, v.usuario_anulacion, dv.comision AS comision_pagada, COALESCE(p.comision, p_old.comision) AS comision_producto, dv.pagocomision');
         $this->db->from('ventas v');
         $this->db->join('detalleventas dv', 'v.idventa = dv.idventa', 'inner');
         // Unir con inventarios (lotes) para obtener el SKU real en los nuevos datos
@@ -1461,11 +1461,14 @@ class Ventas extends CI_Controller {
             $fechaInicioTurno = $fecha_ap_server;
             $usarMayorQue = false;
 
-            // Re-apertura el mismo día: excluir ventas de turnos anteriores ya cerrados
-            if ($last_cierre && $last_apertura && substr($last_cierre->fecha, 0, 10) === $last_apertura->fecha) {
-                if (!$fechaInicioTurno || strtotime($last_cierre->fecha) >= strtotime($fechaInicioTurno)) {
-                    $fechaInicioTurno = $last_cierre->fecha;
-                    $usarMayorQue = true;
+            // Si hay sesión activa en sesiones_caja, usar directamente su fecha_apertura sin sobreescrituras por cierres de otros almacenes/turnos antiguos
+            if (!$caja) {
+                // Re-apertura el mismo día en flujo antiguo: excluir ventas de turnos anteriores ya cerrados
+                if ($last_cierre && $last_apertura && substr($last_cierre->fecha, 0, 10) === $last_apertura->fecha) {
+                    if (!$fechaInicioTurno || strtotime($last_cierre->fecha) >= strtotime($fechaInicioTurno)) {
+                        $fechaInicioTurno = $last_cierre->fecha;
+                        $usarMayorQue = true;
+                    }
                 }
             }
 

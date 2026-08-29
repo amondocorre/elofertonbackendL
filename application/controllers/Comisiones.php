@@ -131,7 +131,7 @@ class Comisiones extends MY_Controller {
     public function ventas_sin_vendedor() {
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
-        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, COALESCE(d.nombre, 'Sucursal') as sucursal_nombre, COALESCE(vend.nombre, v.cliente, 'ENCARGADO DE TIENDA') as encargado_nombre, COALESCE(vend.telefono, v.telefono, '') as encargado_telefono", FALSE);
+        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, COALESCE(d.nombre, 'Sucursal') as sucursal_nombre, COALESCE(v.cliente, vend.nombre, 'SIN CLIENTE') as cliente, COALESCE(v.telefono, vend.telefono, '') as cliente_telefono, COALESCE(vend.nombre, v.cliente, 'ENCARGADO DE TIENDA') as encargado_nombre, COALESCE(vend.telefono, v.telefono, '') as encargado_telefono", FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)', 'left', FALSE);
         $this->db->join('vendedores vend', $vendedor_expr . ' = vend.id', 'left', FALSE);
@@ -205,11 +205,65 @@ class Comisiones extends MY_Controller {
                 ->set_output(json_encode(['error' => 'Error al generar el registro de pago masivo.']));
         }
 
+        // Consultar la tabla de bancos para obtener el mapa de código de otros bancos por nombre
+        $bancos_db = $this->db->get('bancos')->result();
+        $mapa_bancos = [];
+        foreach ($bancos_db as $b) {
+            $mapa_bancos[strtoupper(trim($b->nombrebanco))] = $b->codigo;
+        }
+
+        $items_csv = [];
+        foreach ($vendedores as $v) {
+            $v_id = intval($v['vendedor_id']);
+            $v_row = $this->db->get_where('vendedores', ['id' => $v_id])->row();
+            
+            $banco_nombre = trim($v_row->banco ?? $v['banco'] ?? '');
+            $banco_upper = strtoupper($banco_nombre);
+            
+            $es_bmsc = (strpos($banco_upper, 'MERCANTIL') !== false || strpos($banco_upper, 'BMSC') !== false || strpos($banco_upper, 'SANTA CRUZ') !== false);
+            
+            $cuenta_bmsc = '';
+            $codigo_otro_banco = '';
+            $cuenta_otro_banco = '';
+            $nro_cuenta = trim($v_row->nro_cuenta ?? $v['nro_cuenta'] ?? '');
+
+            if ($es_bmsc) {
+                $cuenta_bmsc = $nro_cuenta;
+            } else {
+                $cuenta_otro_banco = $nro_cuenta;
+                // Buscar el código del otro banco en la tabla bancos
+                if (isset($mapa_bancos[$banco_upper])) {
+                    $codigo_otro_banco = $mapa_bancos[$banco_upper];
+                } else {
+                    // Intento de búsqueda por coincidencia parcial si el string no coincide 100% exacto
+                    foreach ($mapa_bancos as $b_nombre => $b_codigo) {
+                        if (strpos($b_nombre, $banco_upper) !== false || strpos($banco_upper, $b_nombre) !== false) {
+                            $codigo_otro_banco = $b_codigo;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            $items_csv[] = [
+                'ci_nit'              => $v_row->carnet ?? '',
+                'nombre_beneficiario' => $v_row->nombre ?? '',
+                'cuenta_bmsc'         => $cuenta_bmsc,
+                'fecha_pago'          => date('d/m/Y', strtotime($fecha_generacion)),
+                'tipo_pago'           => '3',
+                'importe'             => number_format(floatval($v['monto']), 2, '.', ''),
+                'codigo_otro_banco'   => $codigo_otro_banco,
+                'cuenta_otro_banco'   => $cuenta_otro_banco,
+                'detalle'             => 'pago comision'
+            ];
+        }
+
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode([
-                'message' => 'Lotes de pago masivo registrados en estado Pendiente de Confirmar.',
-                'fecha' => $fecha_generacion
+                'message'   => 'Lotes de pago masivo registrados en estado Pendiente de Confirmar.',
+                'fecha'     => $fecha_generacion,
+                'items_csv' => $items_csv
             ]));
     }
 

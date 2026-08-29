@@ -989,17 +989,18 @@ class Inventario extends MY_Controller {
         if (empty($depId) || $depId === 'all') {
             // Caso: Todas las sucursales (pivoteado por sucursal)
             $this->db->select('
-                p.id,
                 p.idprod,
                 p.descripcion,
                 COALESCE(c.descripcion, p.categoria) AS categoria,
                 COALESCE(m.nombre, p.marca) AS marca,
+                COALESCE(prov.nombre, p.proveedor, "No especificado") AS proveedor,
                 p.precioventa,
                 p.preciolocal
             ', FALSE);
             $this->db->from('productos p');
             $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
             $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+            $this->db->join('proveedores prov', 'p.proveedor = prov.id', 'left');
 
             if (!empty($search)) {
                 $search_escaped = $this->db->escape_like_str(trim($search));
@@ -1048,6 +1049,7 @@ class Inventario extends MY_Controller {
                     'descripcion' => $p->descripcion,
                     'categoria' => $p->categoria ? $p->categoria : '-',
                     'marca' => $p->marca ? $p->marca : '-',
+                    'proveedor' => $p->proveedor ? $p->proveedor : 'No especificado',
                     'precioventa' => floatval($p->precioventa),
                     'preciolocal' => floatval($p->preciolocal),
                     'sucursales' => $branch_stocks,
@@ -1073,6 +1075,7 @@ class Inventario extends MY_Controller {
                 p.descripcion,
                 COALESCE(c.descripcion, p.categoria) AS categoria,
                 COALESCE(m.nombre, p.marca) AS marca,
+                COALESCE(prov.nombre, p.proveedor, "No especificado") AS proveedor,
                 COALESCE(SUM(i.cantidad), 0) AS cantidad,
                 p.precioventa,
                 p.preciolocal
@@ -1080,6 +1083,7 @@ class Inventario extends MY_Controller {
             $this->db->from('productos p');
             $this->db->join('categoria_producto c', 'p.idcategoria = c.idcategoria', 'left');
             $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
+            $this->db->join('proveedores prov', 'p.proveedor = prov.id', 'left');
             $this->db->join('inventarios i', 'p.idprod = i.idprod AND i.deposito = ' . intval($depId), 'left', FALSE);
 
             if (!empty($search)) {
@@ -1090,7 +1094,7 @@ class Inventario extends MY_Controller {
                 $this->db->group_end();
             }
 
-            $this->db->group_by('p.idprod, p.descripcion, c.descripcion, m.nombre, p.precioventa, p.preciolocal');
+            $this->db->group_by('p.idprod, p.descripcion, c.descripcion, m.nombre, prov.nombre, p.proveedor, p.precioventa, p.preciolocal');
 
             if ($stockFilter === 'disponible') {
                 $this->db->having('COALESCE(SUM(i.cantidad), 0) >', 0);
@@ -1113,6 +1117,7 @@ class Inventario extends MY_Controller {
                     'descripcion' => $p->descripcion,
                     'categoria' => $p->categoria ? $p->categoria : '-',
                     'marca' => $p->marca ? $p->marca : '-',
+                    'proveedor' => $p->proveedor ? $p->proveedor : 'No especificado',
                     'deposito_nombre' => $dep_nombre,
                     'cantidad' => $qty,
                     'precioventa' => $pv,
