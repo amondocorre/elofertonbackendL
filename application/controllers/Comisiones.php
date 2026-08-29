@@ -37,6 +37,8 @@ class Comisiones extends MY_Controller {
         
         // Solo las filas que generen comisión
         $this->db->where('dv.comision >', 0);
+        // Excluir ventas anuladas
+        $this->db->where('(v_sale.estado IS NULL OR UPPER(TRIM(v_sale.estado)) != "ANULADO")');
         // Excluir a los que tienen recibe_comision = 0
         $this->db->where('(v.recibe_comision IS NULL OR v.recibe_comision = 1)');
         // Filtrar únicamente a los usuarios que tengan el rol de Vendedor / Vendedores
@@ -107,6 +109,8 @@ class Comisiones extends MY_Controller {
         $this->db->join('inventarios i', 'dv.idprod = i.id', 'left');
         $this->db->where($vendedor_expr . ' = ' . $this->db->escape((string)$vendedor_id), NULL, FALSE);
         $this->db->where('dv.comision >', 0);
+        // Excluir ventas anuladas
+        $this->db->where('(v.estado IS NULL OR UPPER(TRIM(v.estado)) != "ANULADO")');
 
         if ($estado === 'pendientes' || $estado === 'confirmacion_pendiente') {
             $this->db->where('dv.pagocomision IS NULL');
@@ -146,6 +150,8 @@ class Comisiones extends MY_Controller {
         $this->db->group_end();
 
         $this->db->where('dv.comision >', 0);
+        // Excluir ventas anuladas
+        $this->db->where('(v.estado IS NULL OR UPPER(TRIM(v.estado)) != "ANULADO")');
         $this->db->order_by('v.fecha', 'DESC');
         $this->db->limit(500);
 
