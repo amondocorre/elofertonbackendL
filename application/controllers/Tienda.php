@@ -977,6 +977,29 @@ class Tienda extends CI_Controller {
         $this->db->where('dp.idproforma', $proformaId);
         $details = $this->db->get()->result();
 
+        // Convertir imagen a data:image en el servidor para evitar bloqueos de CORS en html2canvas/html2pdf
+        $uploadsDir = FCPATH . 'uploads/productos/';
+        $defaultImgPath = $uploadsDir . 'producto.png';
+        $defaultBase64 = null;
+        if (file_exists($defaultImgPath)) {
+            $defaultBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($defaultImgPath));
+        }
+
+        foreach ($details as &$d) {
+            $d->imagen_base64 = null;
+            if (!empty($d->imagen)) {
+                $imgPath = $uploadsDir . $d->imagen;
+                if (file_exists($imgPath) && is_file($imgPath)) {
+                    $ext = strtolower(pathinfo($imgPath, PATHINFO_EXTENSION));
+                    $mime = ($ext === 'jpg' || $ext === 'jpeg') ? 'image/jpeg' : (($ext === 'webp') ? 'image/webp' : 'image/png');
+                    $d->imagen_base64 = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($imgPath));
+                }
+            }
+            if (empty($d->imagen_base64)) {
+                $d->imagen_base64 = $defaultBase64;
+            }
+        }
+
         echo json_encode([
             'status' => 'success',
             'proforma' => $proforma,
