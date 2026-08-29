@@ -966,8 +966,25 @@ class Tienda extends CI_Controller {
 
         $this->db->select('
             dp.*, 
-            COALESCE(MAX(p.idprod), MAX(p2.idprod), MAX(p3.idprod), MAX(p4.idprod), dp.idprod) as codigo_producto,
-            COALESCE(NULLIF(MAX(p.imagen), ""), NULLIF(MAX(p2.imagen), ""), NULLIF(MAX(p3.imagen), ""), NULLIF(MAX(p4.imagen), "")) as imagen
+            COALESCE(
+                NULLIF(p.idprod, ""),
+                NULLIF(p2.idprod, ""),
+                NULLIF(p3.idprod, ""),
+                NULLIF(p4.idprod, ""),
+                (SELECT p_sub.idprod FROM productos p_sub WHERE p_sub.id = dp.idprod LIMIT 1),
+                (SELECT inv_sub.idprod FROM inventarios inv_sub WHERE inv_sub.id = dp.idprod LIMIT 1),
+                (SELECT p_desc.idprod FROM productos p_desc WHERE p_desc.descripcion = dp.descripcion LIMIT 1),
+                dp.idprod
+            ) as codigo_producto,
+            COALESCE(
+                NULLIF(p.imagen, ""),
+                NULLIF(p2.imagen, ""),
+                NULLIF(p3.imagen, ""),
+                NULLIF(p4.imagen, ""),
+                (SELECT p_sub.imagen FROM productos p_sub WHERE p_sub.id = dp.idprod LIMIT 1),
+                (SELECT p_inv.imagen FROM inventarios inv_sub JOIN productos p_inv ON inv_sub.idprod = p_inv.idprod WHERE inv_sub.id = dp.idprod LIMIT 1),
+                (SELECT p_desc.imagen FROM productos p_desc WHERE p_desc.descripcion = dp.descripcion LIMIT 1)
+            ) as imagen
         ', FALSE);
         $this->db->from('detalleproformas dp');
         $this->db->join('productos p', 'dp.idprod = p.idprod', 'left');
@@ -976,7 +993,7 @@ class Tienda extends CI_Controller {
         $this->db->join('productos p3', 'inv.idprod = p3.idprod', 'left');
         $this->db->join('productos p4', 'TRIM(dp.descripcion) COLLATE utf8mb3_general_ci = TRIM(p4.descripcion) COLLATE utf8mb3_general_ci', 'left', FALSE);
         $this->db->where('dp.idproforma', $proformaId);
-        $this->db->group_by('dp.id, dp.idproforma, dp.idprod, dp.descripcion, dp.cuantos, dp.preciolocal, dp.precioventa, dp.preciofinal, dp.vendedor, dp.comision');
+        $this->db->group_by('dp.id, dp.idproforma, dp.idprod, dp.descripcion, dp.cuantos, dp.preciolocal, dp.precioventa, dp.preciofinal, dp.vendedor, dp.comision, p.idprod, p2.idprod, p3.idprod, p4.idprod, p.imagen, p2.imagen, p3.imagen, p4.imagen');
         $details = $this->db->get()->result();
 
         echo json_encode([
