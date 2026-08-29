@@ -49,8 +49,12 @@ class Usuarios extends CI_Controller {
 
     // Obtener la lista de bancos disponibles desde la tabla bancos
     public function bancos() {
-        $this->load->model('Banco_model');
-        $bancos = $this->Banco_model->get_bancos();
+        $bancos = $this->db
+            ->select('id, nombrebanco, codigo')
+            ->order_by('nombrebanco', 'ASC')
+            ->get('bancos')
+            ->result();
+
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode($bancos));
