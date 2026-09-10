@@ -127,6 +127,33 @@ class VentasMayorista extends MY_Controller {
             }
             if (!$inv) { log_message('error', '400 ERROR IN PROCESAR'); return $this->output->set_status_header(400)->set_content_type('application/json')->set_output(json_encode(['error'=>'Producto no encontrado en inventario.'])); }
             if (floatval($item['precioventa']) <= 0) { log_message('error', '400 ERROR IN PROCESAR'); return $this->output->set_status_header(400)->set_content_type('application/json')->set_output(json_encode(['error'=>'Precio debe ser > 0 para '.$item['descripcion']])); }
+
+            // Validar stock total disponible en inventarios para este depósito
+            $stockTotalRow = $this->db->select_sum('cantidad')
+                ->where('idprod', $inv->idprod)
+                ->where('deposito', $depositoId)
+                ->where('cantidad >', 0)
+                ->get('inventarios')
+                ->row();
+            $stockTotal = $stockTotalRow ? floatval($stockTotalRow->cantidad) : 0;
+            $cantTotal = floatval($item['cantidad'] ?? 0);
+
+            if ($cantTotal <= 0) {
+                return $this->output
+                    ->set_status_header(400)
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode(['error' => 'La cantidad a vender para "' . ($item['descripcion'] ?? $inv->descripcion) . '" debe ser mayor a 0.']));
+            }
+
+            if ($cantTotal > $stockTotal) {
+                return $this->output
+                    ->set_status_header(400)
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode([
+                        'error' => 'Stock insuficiente para "' . ($item['descripcion'] ?? $inv->descripcion) 
+                                 . '". Disponible: ' . $stockTotal . ', Solicitado: ' . $cantTotal
+                    ]));
+            }
         }
         unset($item);
         $this->db->trans_start();

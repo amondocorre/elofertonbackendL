@@ -247,7 +247,7 @@ class Compras extends MY_Controller {
                     'cantidad' => $cuantos,
                     'concepto' => 'INGRESO_POR_COMPRA_DIRECTA',
                     'tipo_movimiento' => 'INGRESO',
-                    'referencia_id' => null
+                    'referencia_id' => $idcompra
                 ]);
             }
         }

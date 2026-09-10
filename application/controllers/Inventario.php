@@ -50,11 +50,23 @@ class Inventario extends MY_Controller {
         $this->db->join('proveedores prov', 'p.proveedor = prov.id', 'left');
 
         if (!empty($search)) {
-            $search_escaped = $this->db->escape_like_str(trim($search));
-            $this->db->group_start();
-            $this->db->like('p.descripcion', $search_escaped, 'both', FALSE);
-            $this->db->or_like('p.idprod', $search_escaped, 'both', FALSE);
-            $this->db->group_end();
+            $words = array_values(array_filter(explode(' ', trim($search)), function($w) {
+                return trim($w) !== '';
+            }));
+
+            if (!empty($words)) {
+                $this->db->group_start();
+                foreach ($words as $word) {
+                    $word_escaped = $this->db->escape_like_str($word);
+                    $this->db->group_start();
+                    $this->db->like('p.descripcion', $word_escaped, 'both', FALSE);
+                    $this->db->or_like('p.idprod', $word_escaped, 'both', FALSE);
+                    $this->db->or_like('p.marca', $word_escaped, 'both', FALSE);
+                    $this->db->or_like('p.categoria', $word_escaped, 'both', FALSE);
+                    $this->db->group_end();
+                }
+                $this->db->group_end();
+            }
         }
 
         $this->db->group_by('p.idprod, p.descripcion, p.categoria, p.marca, p.imagen, inventarios.deposito, depositos.nombre');
@@ -1003,13 +1015,23 @@ class Inventario extends MY_Controller {
             $this->db->join('proveedores prov', 'p.proveedor = prov.id', 'left');
 
             if (!empty($search)) {
-                $search_escaped = $this->db->escape_like_str(trim($search));
-                $this->db->group_start();
-                $this->db->like('p.descripcion', $search_escaped);
-                $this->db->or_like('p.idprod', $search_escaped);
-                $this->db->or_like('m.nombre', $search_escaped);
-                $this->db->or_like('c.descripcion', $search_escaped);
-                $this->db->group_end();
+                $words = array_values(array_filter(explode(' ', trim($search)), function($w) {
+                    return trim($w) !== '';
+                }));
+
+                if (!empty($words)) {
+                    $this->db->group_start();
+                    foreach ($words as $word) {
+                        $word_escaped = $this->db->escape_like_str($word);
+                        $this->db->group_start();
+                        $this->db->like('p.descripcion', $word_escaped);
+                        $this->db->or_like('p.idprod', $word_escaped);
+                        $this->db->or_like('m.nombre', $word_escaped);
+                        $this->db->or_like('c.descripcion', $word_escaped);
+                        $this->db->group_end();
+                    }
+                    $this->db->group_end();
+                }
             }
 
             $this->db->order_by('p.descripcion', 'ASC');
@@ -1087,11 +1109,23 @@ class Inventario extends MY_Controller {
             $this->db->join('inventarios i', 'p.idprod = i.idprod AND i.deposito = ' . intval($depId), 'left', FALSE);
 
             if (!empty($search)) {
-                $search_escaped = $this->db->escape_like_str(trim($search));
-                $this->db->group_start();
-                $this->db->like('p.descripcion', $search_escaped);
-                $this->db->or_like('p.idprod', $search_escaped);
-                $this->db->group_end();
+                $words = array_values(array_filter(explode(' ', trim($search)), function($w) {
+                    return trim($w) !== '';
+                }));
+
+                if (!empty($words)) {
+                    $this->db->group_start();
+                    foreach ($words as $word) {
+                        $word_escaped = $this->db->escape_like_str($word);
+                        $this->db->group_start();
+                        $this->db->like('p.descripcion', $word_escaped);
+                        $this->db->or_like('p.idprod', $word_escaped);
+                        $this->db->or_like('m.nombre', $word_escaped);
+                        $this->db->or_like('c.descripcion', $word_escaped);
+                        $this->db->group_end();
+                    }
+                    $this->db->group_end();
+                }
             }
 
             $this->db->group_by('p.idprod, p.descripcion, c.descripcion, m.nombre, prov.nombre, p.proveedor, p.precioventa, p.preciolocal');
@@ -1135,5 +1169,193 @@ class Inventario extends MY_Controller {
                     'items' => $reporte_items
                 ]));
         }
+    }
+
+    /**
+     * Realiza un ajuste de inventario (Ingreso o Egreso manual) con motivo, fecha y usuario responsable.
+     */
+    public function ajustar_stock() {
+        $this->check_permission('Inventario', 'editar');
+
+        $data = json_decode(file_get_contents('php://input'), true);
+
+        $idprod = isset($data['idprod']) ? trim($data['idprod']) : '';
+        $deposito_id = isset($data['deposito']) ? intval($data['deposito']) : 0;
+        $tipo = isset($data['tipo']) ? strtoupper(trim($data['tipo'])) : 'INGRESO'; // 'INGRESO' o 'EGRESO'
+        $cantidad = isset($data['cantidad']) ? floatval($data['cantidad']) : 0;
+        $motivo = isset($data['motivo']) ? trim($data['motivo']) : '';
+        $fecha_ajuste = isset($data['fecha']) && !empty($data['fecha']) ? trim($data['fecha']) : date('Y-m-d H:i:s');
+        $usuario_id = $this->input->get_request_header('X-User-Id', TRUE) ?: (isset($data['usuario_id']) ? intval($data['usuario_id']) : 1);
+
+        if (empty($idprod) || $deposito_id <= 0 || $cantidad <= 0 || empty($motivo)) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(400)
+                ->set_output(json_encode(['error' => 'Código de producto, sucursal, cantidad mayor a 0 y descripción/motivo son obligatorios.']));
+        }
+
+        // Obtener datos del producto maestro
+        $prodMaster = $this->db->where('idprod', $idprod)->get('productos')->row();
+        if (!$prodMaster) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(404)
+                ->set_output(json_encode(['error' => 'El producto especificado no existe en el catálogo.']));
+        }
+
+        // Obtener usuario responsable
+        $userRow = $this->db->where('id', $usuario_id)->get('vendedores')->row();
+        $usuario_nombre = $userRow ? ($userRow->nombre . ' ' . ($userRow->apellido ?? '')) : 'Usuario ' . $usuario_id;
+
+        // Formatear fecha para base de datos si viene en DD/MM/YYYY
+        if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $fecha_ajuste, $matches)) {
+            $fecha_bd = sprintf('%04d-%02d-%02d %s', $matches[3], $matches[2], $matches[1], date('H:i:s'));
+        } else {
+            $fecha_bd = date('Y-m-d H:i:s', strtotime($fecha_ajuste));
+        }
+
+        $this->db->trans_start();
+
+        if ($tipo === 'INGRESO') {
+            // Buscar lote existente en este depósito
+            $this->db->where('idprod', $idprod);
+            $this->db->where('deposito', $deposito_id);
+            $this->db->order_by('id', 'DESC');
+            $loteExistente = $this->db->get('inventarios')->row();
+
+            $lote_id = null;
+            if ($loteExistente) {
+                $this->db->set('cantidad', 'cantidad + ' . $cantidad, FALSE);
+                $this->db->where('id', $loteExistente->id);
+                $this->db->update('inventarios');
+                $lote_id = $loteExistente->id;
+            } else {
+                $nuevoLote = [
+                    'idprod' => $prodMaster->idprod,
+                    'descripcion' => $prodMaster->descripcion,
+                    'marca' => $prodMaster->marca,
+                    'categoria' => $prodMaster->categoria,
+                    'unidad' => $prodMaster->subunidad ?: 'unid',
+                    'proveedor' => $prodMaster->proveedor ?: '',
+                    'imagenes' => $prodMaster->imagen ?: '',
+                    'precioventa' => $prodMaster->precioventa,
+                    'preciolocal' => $prodMaster->preciolocal,
+                    'cantidad' => $cantidad,
+                    'comision' => $prodMaster->comision ?: 0,
+                    'deposito' => $deposito_id,
+                    'fecha_ingreso' => $fecha_bd
+                ];
+                $this->db->insert('inventarios', $nuevoLote);
+                $lote_id = $this->db->insert_id();
+            }
+
+            // Actualizar inventario_stock
+            $this->db->where('producto_id', $prodMaster->id)->where('almacen_id', $deposito_id);
+            $stockFila = $this->db->get('inventario_stock')->row();
+            if ($stockFila) {
+                $this->db->where('producto_id', $prodMaster->id)->where('almacen_id', $deposito_id);
+                $this->db->set('stock', 'stock + ' . $cantidad, FALSE)->update('inventario_stock');
+            } else {
+                $this->db->insert('inventario_stock', ['producto_id' => $prodMaster->id, 'almacen_id' => $deposito_id, 'stock' => $cantidad]);
+            }
+
+            // Registrar en Kardex
+            $concepto = 'AJUSTE DE INVENTARIO (+) : ' . $motivo . ' [Por: ' . trim($usuario_nombre) . ']';
+            $this->db->insert('kardex', [
+                'producto_id' => $prodMaster->id,
+                'almacen_id' => $deposito_id,
+                'lote_id' => $lote_id,
+                'cantidad' => $cantidad,
+                'concepto' => $concepto,
+                'tipo_movimiento' => 'INGRESO',
+                'referencia_id' => $usuario_id,
+                'creado_at' => $fecha_bd
+            ]);
+
+        } elseif ($tipo === 'EGRESO') {
+            // Verificar stock disponible total en ese depósito
+            $this->db->select_sum('cantidad');
+            $this->db->where('idprod', $idprod);
+            $this->db->where('deposito', $deposito_id);
+            $stockActual = floatval($this->db->get('inventarios')->row()->cantidad ?? 0);
+
+            if ($stockActual < $cantidad) {
+                $this->db->trans_rollback();
+                return $this->output
+                    ->set_content_type('application/json')
+                    ->set_status_header(400)
+                    ->set_output(json_encode([
+                        'error' => 'Stock insuficiente para realizar el egreso. Stock actual en esta sucursal: ' . $stockActual
+                    ]));
+            }
+
+            // Descontar por FIFO de los lotes
+            $this->db->where('idprod', $idprod);
+            $this->db->where('deposito', $deposito_id);
+            $this->db->where('cantidad >', 0);
+            $this->db->order_by('id', 'ASC');
+            $lotes = $this->db->get('inventarios')->result();
+
+            $restante = $cantidad;
+            $ultimo_lote_id = null;
+
+            foreach ($lotes as $lote) {
+                if ($restante <= 0) break;
+                $tomar = min($restante, floatval($lote->cantidad));
+                $this->db->set('cantidad', 'cantidad - ' . $tomar, FALSE);
+                $this->db->where('id', $lote->id);
+                $this->db->update('inventarios');
+                $ultimo_lote_id = $lote->id;
+                $restante -= $tomar;
+            }
+
+            // Actualizar inventario_stock
+            $this->db->where('producto_id', $prodMaster->id)->where('almacen_id', $deposito_id);
+            $stockFila = $this->db->get('inventario_stock')->row();
+            if ($stockFila) {
+                $this->db->where('producto_id', $prodMaster->id)->where('almacen_id', $deposito_id);
+                $this->db->set('stock', 'stock - ' . $cantidad, FALSE)->update('inventario_stock');
+            } else {
+                $this->db->insert('inventario_stock', ['producto_id' => $prodMaster->id, 'almacen_id' => $deposito_id, 'stock' => -$cantidad]);
+            }
+
+            // Registrar en Kardex
+            $concepto = 'AJUSTE DE INVENTARIO (-) : ' . $motivo . ' [Por: ' . trim($usuario_nombre) . ']';
+            $this->db->insert('kardex', [
+                'producto_id' => $prodMaster->id,
+                'almacen_id' => $deposito_id,
+                'lote_id' => $ultimo_lote_id,
+                'cantidad' => $cantidad,
+                'concepto' => $concepto,
+                'tipo_movimiento' => 'EGRESO',
+                'referencia_id' => $usuario_id,
+                'creado_at' => $fecha_bd
+            ]);
+        } else {
+            $this->db->trans_rollback();
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(400)
+                ->set_output(json_encode(['error' => 'Tipo de movimiento inválido. Use INGRESO o EGRESO.']));
+        }
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_status_header(500)
+                ->set_output(json_encode(['error' => 'Error al guardar el ajuste de inventario en la base de datos.']));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(200)
+            ->set_output(json_encode([
+                'message' => 'Ajuste de inventario registrado exitosamente.',
+                'tipo' => $tipo,
+                'cantidad' => $cantidad,
+                'idprod' => $idprod
+            ]));
     }
 }

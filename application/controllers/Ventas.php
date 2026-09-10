@@ -336,7 +336,14 @@ class Ventas extends CI_Controller {
             }
             $precioLista = ceil($precioListaBase * $impuestoFactor);
 
-            if ($comision > 0) {
+            // Si es un producto marcado como obsequio (promoción de regalo a costo 0)
+            $esObsequio = !empty($item['es_obsequio']) || (!empty($item['promocion_tipo']) && $item['promocion_tipo'] === 'regalo') || (isset($item['precioventa']) && floatval($item['precioventa']) === 0.0 && !empty($item['nombre_promocion']));
+
+            if ($esObsequio) {
+                // Para productos de obsequio se permite precio 0 y no se valida comisión mínima
+                $precioVenta = 0.0;
+                $item['precioventa'] = 0.0;
+            } else if ($comision > 0) {
                 $precioMin = max(0, $precioLista - $comision);
                 if (fmod($precioVenta, 1) != 0) {
                     return $this->output
@@ -369,6 +376,35 @@ class Ventas extends CI_Controller {
                                 . '" no permite modificar el precio de venta.',
                         ]));
                 }
+            }
+
+            // Validar stock total disponible en inventarios para este depósito
+            $stockTotalDisponibleRow = $this->db->select_sum('cantidad')
+                ->where('idprod', $inv->idprod)
+                ->where('deposito', $depositoId)
+                ->where('cantidad >', 0)
+                ->get('inventarios')
+                ->row();
+            $stockTotalDisponible = $stockTotalDisponibleRow ? floatval($stockTotalDisponibleRow->cantidad) : 0;
+            $cantA_Vender = floatval($item['cantidad'] ?? 0);
+
+            if ($cantA_Vender <= 0) {
+                return $this->output
+                    ->set_status_header(400)
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode([
+                        'error' => 'La cantidad a vender para "' . ($item['descripcion'] ?? $inv->descripcion) . '" debe ser mayor a 0.'
+                    ]));
+            }
+
+            if ($cantA_Vender > $stockTotalDisponible) {
+                return $this->output
+                    ->set_status_header(400)
+                    ->set_content_type('application/json')
+                    ->set_output(json_encode([
+                        'error' => 'Stock insuficiente para "' . ($item['descripcion'] ?? $inv->descripcion) 
+                                 . '". Disponible: ' . $stockTotalDisponible . ', Solicitado: ' . $cantA_Vender
+                    ]));
             }
         }
         unset($item);
@@ -441,7 +477,11 @@ class Ventas extends CI_Controller {
             $promoInfoItem = $this->obtener_descuento_promocional_info($prodMaster, $item);
             $descuentoPromo = $promoInfoItem['monto'];
             $obsPromoItem = '';
-            if ($promoInfoItem['porcentaje'] > 0 || $descuentoPromo > 0) {
+            $esObsequioItem = !empty($item['es_obsequio']) || (!empty($item['promocion_tipo']) && $item['promocion_tipo'] === 'regalo') || (isset($item['precioventa']) && floatval($item['precioventa']) === 0.0 && !empty($item['nombre_promocion']));
+
+            if ($esObsequioItem) {
+                $obsPromoItem = "OBSEQUIO PROMOCIONAL" . (!empty($item['nombre_promocion']) ? " (" . $item['nombre_promocion'] . ")" : "");
+            } else if ($promoInfoItem['porcentaje'] > 0 || $descuentoPromo > 0) {
                 $pctTxt = intval($promoInfoItem['porcentaje']);
                 if ($pctTxt <= 0 && $prodMaster && floatval($prodMaster->precioventa) > 0) {
                     $pctTxt = round(($descuentoPromo / floatval($prodMaster->precioventa)) * 100);

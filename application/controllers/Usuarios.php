@@ -19,10 +19,12 @@ class Usuarios extends CI_Controller {
 
     // Obtener la lista de usuarios (vendedores)
     public function index() {
-        $this->db->select("vendedores.*, depositos.nombre as deposito_nombre, GROUP_CONCAT(vendedores_roles.rol SEPARATOR ',') as roles_string");
+        $this->db->select("vendedores.*, depositos.nombre as deposito_nombre, v_reg.nombre as registrado_por_nombre, GROUP_CONCAT(vendedores_roles.rol SEPARATOR ',') as roles_string");
         $this->db->from('vendedores');
         // Join para obtener el nombre del depósito/sucursal
         $this->db->join('depositos', 'vendedores.ciudad = depositos.id', 'left');
+        // Join para obtener el nombre de quien lo registró (reclutador/encargado)
+        $this->db->join('vendedores v_reg', 'vendedores.registrado_por = v_reg.id', 'left');
         // Join para obtener los roles múltiples
         $this->db->join('vendedores_roles', 'vendedores.id = vendedores_roles.vendedor_id', 'left');
         $this->db->group_by('vendedores.id');
@@ -132,6 +134,7 @@ class Usuarios extends CI_Controller {
             'rol' => $rol,
             'id_rol' => $id_rol,
             'ciudad' => $ciudad,
+            'registrado_por' => !empty($data['registrado_por']) ? intval($data['registrado_por']) : null,
             'telefono' => $telefono,
             'direccion' => $direccion,
             'carnet' => $carnet,

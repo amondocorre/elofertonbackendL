@@ -19,6 +19,7 @@ class Descuentos extends MY_Controller {
 
     /**
      * Auto-migración para agregar las columnas comision_minima y productos_ids a promociones_descuentos
+     * y crear/ajustar la tabla de promociones de obsequios/combos con la collation correcta.
      */
     private function check_db_schema() {
         if (!$this->db->field_exists('comision_minima', 'promociones_descuentos')) {
@@ -26,6 +27,26 @@ class Descuentos extends MY_Controller {
         }
         if (!$this->db->field_exists('productos_ids', 'promociones_descuentos')) {
             $this->db->query("ALTER TABLE promociones_descuentos ADD COLUMN productos_ids TEXT NULL AFTER comision_minima");
+        }
+        if (!$this->db->table_exists('promociones_regalos')) {
+            $this->db->query("
+                CREATE TABLE IF NOT EXISTS `promociones_regalos` (
+                  `id` int(11) NOT NULL AUTO_INCREMENT,
+                  `nombre` varchar(255) NOT NULL,
+                  `producto_principal_id` varchar(100) NOT NULL,
+                  `cantidad_principal` int(11) NOT NULL DEFAULT 1,
+                  `producto_regalo_id` varchar(100) NOT NULL,
+                  `cantidad_regalo` int(11) NOT NULL DEFAULT 1,
+                  `fecha_inicio` date NOT NULL,
+                  `fecha_fin` date NOT NULL,
+                  `activo` tinyint(1) NOT NULL DEFAULT 1,
+                  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (`id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+            ");
+        } else {
+            // Asegurar que la tabla y sus columnas de comparación tengan el mismo charset/collation que la tabla productos
+            @$this->db->query("ALTER TABLE `promociones_regalos` CONVERT TO CHARACTER SET utf8 COLLATE utf8_general_ci");
         }
     }
 
@@ -518,5 +539,142 @@ class Descuentos extends MY_Controller {
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode(['status' => 'success', 'data' => $promociones]));
+    }
+
+    /**
+     * Listar promociones de obsequios/combos
+     */
+    public function listar_regalos() {
+        $this->check_permission('Descuentos', 'ver');
+
+        $sql = "SELECT r.*, 
+                    p1.descripcion as producto_principal_nombre, p1.precioventa as producto_principal_precio, p1.imagen as producto_principal_imagen,
+                    p2.descripcion as producto_regalo_nombre, p2.precioventa as producto_regalo_precio, p2.imagen as producto_regalo_imagen,
+                    DATE_FORMAT(r.fecha_inicio, '%d/%m/%Y') as fecha_inicio_formatted,
+                    DATE_FORMAT(r.fecha_fin, '%d/%m/%Y') as fecha_fin_formatted,
+                    (CASE 
+                        WHEN r.activo = 0 THEN 'Inactiva'
+                        WHEN CURDATE() < r.fecha_inicio THEN 'Programada'
+                        WHEN CURDATE() > r.fecha_fin THEN 'Expirada'
+                        ELSE 'Vigente'
+                    END) as estado_vigencia
+                FROM `promociones_regalos` `r`
+                LEFT JOIN `productos` `p1` ON CONVERT(`r`.`producto_principal_id` USING utf8) = CONVERT(`p1`.`idprod` USING utf8)
+                LEFT JOIN `productos` `p2` ON CONVERT(`r`.`producto_regalo_id` USING utf8) = CONVERT(`p2`.`idprod` USING utf8)
+                ORDER BY `r`.`id` DESC";
+
+        $query = $this->db->query($sql);
+        $res = $query->result_array();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $res]));
+    }
+
+    /**
+     * Guardar o actualizar una regla de obsequio/combo
+     */
+    public function guardar_regalo() {
+        $this->check_permission('Descuentos', 'crear');
+        $data = json_decode(file_get_contents('php://input'), true);
+
+        if (empty($data['nombre']) || empty($data['producto_principal_id']) || empty($data['producto_regalo_id']) || empty($data['fecha_inicio']) || empty($data['fecha_fin'])) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Complete todos los campos requeridos (Nombre, Producto Principal, Obsequio, Fechas).']));
+        }
+
+        $id = !empty($data['id']) ? intval($data['id']) : null;
+        $save_data = [
+            'nombre' => trim($data['nombre']),
+            'producto_principal_id' => trim($data['producto_principal_id']),
+            'cantidad_principal' => max(1, intval($data['cantidad_principal'] ?? 1)),
+            'producto_regalo_id' => trim($data['producto_regalo_id']),
+            'cantidad_regalo' => max(1, intval($data['cantidad_regalo'] ?? 1)),
+            'fecha_inicio' => $data['fecha_inicio'],
+            'fecha_fin' => $data['fecha_fin'],
+            'activo' => isset($data['activo']) ? intval($data['activo']) : 1
+        ];
+
+        if ($id) {
+            $this->db->where('id', $id)->update('promociones_regalos', $save_data);
+            $message = 'Promoción de obsequio actualizada con éxito.';
+        } else {
+            $this->db->insert('promociones_regalos', $save_data);
+            $message = 'Promoción de obsequio creada con éxito.';
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'message' => $message]));
+    }
+
+    /**
+     * Toggle activo de obsequio
+     */
+    public function toggle_regalo() {
+        $this->check_permission('Descuentos', 'editar');
+        $data = json_decode(file_get_contents('php://input'), true);
+        $id = intval($data['id'] ?? 0);
+
+        if (!$id) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID inválido.']));
+        }
+
+        $row = $this->db->get_where('promociones_regalos', ['id' => $id])->row();
+        if (!$row) {
+            return $this->output->set_status_header(404)->set_output(json_encode(['error' => 'Promoción no encontrada.']));
+        }
+
+        $nuevo_activo = $row->activo == 1 ? 0 : 1;
+        $this->db->where('id', $id)->update('promociones_regalos', ['activo' => $nuevo_activo]);
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'activo' => $nuevo_activo]));
+    }
+
+    /**
+     * Eliminar promoción de obsequio
+     */
+    public function eliminar_regalo() {
+        $this->check_permission('Descuentos', 'eliminar');
+        $data = json_decode(file_get_contents('php://input'), true);
+        $id = intval($data['id'] ?? 0);
+
+        if (!$id) {
+            return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'ID inválido.']));
+        }
+
+        $this->db->where('id', $id)->delete('promociones_regalos');
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'message' => 'Promoción de obsequio eliminada correctamente.']));
+    }
+
+    /**
+     * Endpoint para obtener las promociones de obsequios activas vigentes hoy
+     */
+    public function obtener_regalos_activos() {
+        $hoy = date('Y-m-d');
+        // Se buscan todas las promociones activas cuya fecha de expiración no haya pasado (permitiendo las creadas hoy aún con desfase horario)
+        $sql = "SELECT r.*, 
+                    p1.descripcion as producto_principal_nombre, p1.precioventa as producto_principal_precio,
+                    p2.descripcion as producto_regalo_nombre, p2.precioventa as producto_regalo_precio
+                FROM `promociones_regalos` `r`
+                LEFT JOIN `productos` `p1` ON CONVERT(`r`.`producto_principal_id` USING utf8) = CONVERT(`p1`.`idprod` USING utf8)
+                LEFT JOIN `productos` `p2` ON CONVERT(`r`.`producto_regalo_id` USING utf8) = CONVERT(`p2`.`idprod` USING utf8)
+                WHERE `r`.`activo` = 1
+                AND DATE(`r`.`fecha_fin`) >= ?
+                ORDER BY `r`.`id` DESC";
+
+        $query = $this->db->query($sql, [$hoy]);
+        $regalos = $query->result_array();
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'data' => $regalos]));
     }
 }

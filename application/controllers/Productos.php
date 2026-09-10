@@ -619,6 +619,23 @@ class Productos extends MY_Controller {
                 ->set_output(json_encode(['error' => 'Producto no encontrado.']));
         }
 
+        // Obtener stock actual real desde la tabla inventarios (desglosado por depósito y total)
+        $this->db->select('COALESCE(SUM(cantidad), 0) as stock_total');
+        $this->db->where('idprod', $prodMaster->idprod);
+        if ($almacen_id) {
+            $this->db->where('deposito', $almacen_id);
+        }
+        $stockTotalRow = $this->db->get('inventarios')->row();
+        $stockActual = floatval($stockTotalRow->stock_total ?? 0);
+
+        // Desglose de stock por cada sucursal
+        $this->db->select('i.deposito, d.nombre as sucursal_nombre, COALESCE(SUM(i.cantidad), 0) as stock');
+        $this->db->from('inventarios i');
+        $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+        $this->db->where('i.idprod', $prodMaster->idprod);
+        $this->db->group_by('i.deposito, d.nombre');
+        $stockPorSucursal = $this->db->get()->result();
+
         // 1. Si hay filtro de fecha, calcular el saldo anterior acumulado (ingresos - egresos) antes de esa fecha
         $saldo_anterior = 0;
         $ingresos_anteriores = 0;
@@ -635,7 +652,8 @@ class Productos extends MY_Controller {
             $query_ant = $this->db->get()->result();
 
             foreach ($query_ant as $m) {
-                if ($m->tipo_movimiento === 'INGRESO') {
+                $tipo_m = strtoupper(trim($m->tipo_movimiento));
+                if ($tipo_m === 'INGRESO' || $tipo_m === 'ENTRADA') {
                     $ingresos_anteriores += floatval($m->cantidad);
                 } else {
                     $egresos_anteriores += floatval($m->cantidad);
@@ -646,7 +664,9 @@ class Productos extends MY_Controller {
 
         // 2. Obtener movimientos que aplican (si hay fecha, >= fecha; si no, desde el inicio)
         $this->db->select('
+            k.id as kardex_id,
             k.creado_at as fecha,
+            k.almacen_id,
             d.nombre as sucursal,
             k.concepto as tipo,
             k.referencia_id,
@@ -676,11 +696,13 @@ class Productos extends MY_Controller {
         // Si hay fecha y por lo tanto saldo anterior, insertar la fila de saldo acumulado inicial
         if (!empty($fecha)) {
             $kardex_report[] = [
-                'fecha' => $fecha,
+                'fecha' => $fecha . ' 00:00:00',
                 'sucursal' => 'ANTERIOR',
                 'tipo' => 'Saldo Inicial Acumulado',
+                'tipo_categoria' => 'INICIAL',
                 'nro_documento' => '-',
-                'cliente' => '-',
+                'cliente' => 'Acumulado Previo',
+                'detalle' => 'Saldo arrastrado antes de ' . $fecha,
                 'ingreso' => $ingresos_anteriores,
                 'egreso' => $egresos_anteriores,
                 'saldo' => $saldo_anterior
@@ -690,57 +712,95 @@ class Productos extends MY_Controller {
         foreach ($movimientos as $mov) {
             $ingreso = null;
             $egreso = null;
-            $nro_documento = $mov->referencia_id ? $mov->referencia_id : '-';
+            $nro_documento = $mov->referencia_id ? (string)$mov->referencia_id : '-';
             $cliente = '-';
+            $detalle_extra = '';
+            $tipo_categoria = 'OTRO';
 
-            if ($mov->tipo_movimiento === 'INGRESO') {
-                $ingreso = floatval($mov->cantidad);
+            $tipo_mov = strtoupper(trim($mov->tipo_movimiento));
+            $cant_num = floatval($mov->cantidad);
+
+            if ($tipo_mov === 'INGRESO' || $tipo_mov === 'ENTRADA') {
+                $ingreso = $cant_num;
                 $saldo_acumulado += $ingreso;
             } else {
-                $egreso = floatval($mov->cantidad);
+                $egreso = $cant_num;
                 $saldo_acumulado -= $egreso;
             }
 
-            // Normalizar el tipo de concepto y buscar información del cliente/proveedor/número de compra
+            // Normalizar y enriquecer el concepto
+            $concepto_raw = strtoupper(trim($mov->tipo ?? ''));
             $tipo_label = $mov->tipo;
-            if (stripos($mov->tipo, 'VENTA') !== false) {
-                $tipo_label = 'venta';
-                // Buscar cliente en ventas
+
+            if (stripos($concepto_raw, 'VENTA') !== false) {
+                $tipo_label = 'Venta Realizada';
+                $tipo_categoria = 'VENTA';
                 if ($mov->referencia_id) {
-                    $venta = $this->db->select('id, cliente, idventa')->where('id', intval($mov->referencia_id))->or_where('idventa', $mov->referencia_id)->get('ventas')->row();
+                    $venta = $this->db->select('id, cliente, idventa, formapago')->where('id', intval($mov->referencia_id))->or_where('idventa', $mov->referencia_id)->get('ventas')->row();
                     if ($venta) {
-                        $cliente = $venta->cliente;
-                        $nro_documento = $venta->id; // Retornar el id secuencial numérico
+                        $cliente = $venta->cliente ?: 'Cliente General';
+                        $nro_documento = 'VTA-' . $venta->id;
+                        $detalle_extra = 'Pago: ' . ($venta->formapago ?: 'Contado');
                     }
                 }
-            } elseif (stripos($mov->tipo, 'COMPRA') !== false) {
-                $tipo_label = 'compra';
+            } elseif (stripos($concepto_raw, 'COMPRA') !== false) {
+                $tipo_label = 'Compra / Ingreso Proveedor';
+                $tipo_categoria = 'COMPRA';
                 if ($mov->lote_id) {
-                    // Buscar en inventarios para ver el proveedor
                     $lote = $this->db->select('proveedor')->where('id', intval($mov->lote_id))->get('inventarios')->row();
-                    if ($lote) {
+                    if ($lote && $lote->proveedor) {
                         $cliente = $lote->proveedor;
                     }
                 }
-                // Si hay referencia de compra, obtener nro de compra
                 if ($mov->referencia_id) {
-                    $comp = $this->db->select('idcompra')->where('id', intval($mov->referencia_id))->or_where('idcompra', $mov->referencia_id)->get('compras')->row();
+                    $comp = $this->db->select('idcompra, proveedor, formapago')->where('id', intval($mov->referencia_id))->or_where('idcompra', $mov->referencia_id)->get('compras')->row();
                     if ($comp) {
-                        $nro_documento = $comp->idcompra;
+                        $nro_documento = 'CMP-' . $comp->idcompra;
+                        if ($comp->proveedor) $cliente = $comp->proveedor;
+                        $detalle_extra = 'Compra ' . ($comp->formapago ?: 'Directa');
                     }
                 }
-            } elseif (stripos($mov->tipo, 'TRANSFERENCIA') !== false || stripos($mov->tipo, 'TRASPASO') !== false) {
-                $tipo_label = 'transferencia';
-            } elseif (stripos($mov->tipo, 'DEVOLUCION') !== false) {
-                $tipo_label = 'devolucion';
+            } elseif (stripos($concepto_raw, 'TRANSFERENCIA') !== false || stripos($concepto_raw, 'TRASPASO') !== false) {
+                $tipo_categoria = 'TRANSFERENCIA';
+                if (stripos($concepto_raw, 'SALIDA') !== false || $tipo_mov === 'EGRESO') {
+                    $tipo_label = 'Transferencia (Salida)';
+                } else {
+                    $tipo_label = 'Transferencia (Ingreso)';
+                }
+
+                if ($mov->referencia_id) {
+                    $transf = $this->db->select('t.id, t.almacen_origen_id, t.almacen_destino_id, o.nombre as origen_nom, d.nombre as destino_nom')
+                                       ->from('transferencias t')
+                                       ->join('depositos o', 't.almacen_origen_id = o.id', 'left')
+                                       ->join('depositos d', 't.almacen_destino_id = d.id', 'left')
+                                       ->where('t.id', intval($mov->referencia_id))
+                                       ->get()->row();
+                    if ($transf) {
+                        $nro_documento = 'TRF-' . $transf->id;
+                        $cliente = 'De: ' . ($transf->origen_nom ?: 'Almacén') . ' ➔ A: ' . ($transf->destino_nom ?: 'Almacén');
+                    }
+                }
+            } elseif (stripos($concepto_raw, 'ANULACION') !== false || stripos($concepto_raw, 'DEVOLUCION') !== false) {
+                $tipo_label = 'Anulación de Venta (Devolución)';
+                $tipo_categoria = 'DEVOLUCION';
+                if ($mov->referencia_id) {
+                    $nro_documento = 'ANUL-' . $mov->referencia_id;
+                    $cliente = 'Devolución a inventario';
+                }
+            } elseif (stripos($concepto_raw, 'STOCK INICIAL') !== false || stripos($concepto_raw, 'AJUSTE') !== false) {
+                $tipo_label = 'Ajuste / Stock Inicial';
+                $tipo_categoria = 'AJUSTE';
+                $cliente = 'Carga de Inventario';
             }
 
             $kardex_report[] = [
                 'fecha' => date('Y-m-d H:i:s', strtotime($mov->fecha)),
                 'sucursal' => $mov->sucursal ? $mov->sucursal : 'General',
                 'tipo' => $tipo_label,
+                'tipo_categoria' => $tipo_categoria,
                 'nro_documento' => $nro_documento,
                 'cliente' => $cliente,
+                'detalle' => $detalle_extra,
                 'ingreso' => $ingreso,
                 'egreso' => $egreso,
                 'saldo' => $saldo_acumulado
@@ -752,6 +812,9 @@ class Productos extends MY_Controller {
             ->set_content_type('application/json')
             ->set_output(json_encode([
                 'producto' => $prodMaster,
+                'stock_actual' => $stockActual,
+                'stock_por_sucursal' => $stockPorSucursal,
+                'saldo_final_movimientos' => $saldo_acumulado,
                 'kardex' => $kardex_report
             ]));
     }
