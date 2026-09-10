@@ -636,33 +636,65 @@ class Productos extends MY_Controller {
         $this->db->group_by('i.deposito, d.nombre');
         $stockPorSucursal = $this->db->get()->result();
 
-        // 1. Si hay filtro de fecha, calcular el saldo anterior acumulado (ingresos - egresos) antes de esa fecha
-        $saldo_anterior = 0;
-        $ingresos_anteriores = 0;
-        $egresos_anteriores = 0;
+        // 1. Identificar lotes de inventarios y asegurar que si no tienen un registro de INGRESO en kardex, se genere un movimiento de Stock Inicial virtual
+        $this->db->select('i.id as lote_id, i.deposito as almacen_id, d.nombre as sucursal, i.cantidad, i.cantidad_inicial, i.fecha_ingreso, i.proveedor');
+        $this->db->from('inventarios i');
+        $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+        $this->db->where('i.idprod', $prodMaster->idprod);
+        if ($almacen_id) {
+            $this->db->where('i.deposito', $almacen_id);
+        }
+        $lotes = $this->db->get()->result();
 
-        if (!empty($fecha)) {
-            $this->db->select('tipo_movimiento, cantidad');
+        // Para cada lote, verificar si ya tiene un INGRESO registrado en la tabla kardex para este producto
+        $movimientos_iniciales_virtuales = [];
+        foreach ($lotes as $lote) {
+            $this->db->select('id');
             $this->db->from('kardex');
             $this->db->where('producto_id', $producto_id);
-            $this->db->where('DATE(creado_at) <', $fecha);
-            if ($almacen_id) {
-                $this->db->where('almacen_id', $almacen_id);
-            }
-            $query_ant = $this->db->get()->result();
+            $this->db->where('lote_id', $lote->lote_id);
+            $this->db->where_in('tipo_movimiento', ['INGRESO', 'ENTRADA']);
+            $tiene_ingreso_kardex = $this->db->get()->num_rows() > 0;
 
-            foreach ($query_ant as $m) {
-                $tipo_m = strtoupper(trim($m->tipo_movimiento));
-                if ($tipo_m === 'INGRESO' || $tipo_m === 'ENTRADA') {
-                    $ingresos_anteriores += floatval($m->cantidad);
-                } else {
-                    $egresos_anteriores += floatval($m->cantidad);
+            if (!$tiene_ingreso_kardex) {
+                // Si no tiene ingreso en kardex, calcular cuál fue la cantidad inicial ingresada del lote:
+                // Si cantidad_inicial > 0, usar cantidad_inicial.
+                // Si cantidad_inicial == 0 (no se guardó), sumar ventas registradas del lote + stock actual restante
+                $cant_ini = floatval($lote->cantidad_inicial);
+                if ($cant_ini <= 0) {
+                    $this->db->select('COALESCE(SUM(cuantos), 0) as total_vendido');
+                    $this->db->from('detalleventas');
+                    $this->db->where('inventario_id', $lote->lote_id);
+                    $vRow = $this->db->get()->row();
+                    $total_vendido = floatval($vRow->total_vendido ?? 0);
+                    $cant_ini = floatval($lote->cantidad) + $total_vendido;
+                }
+
+                if ($cant_ini > 0) {
+                    $fecha_lote = !empty($lote->fecha_ingreso) ? $lote->fecha_ingreso : '2026-01-01 00:00:00';
+                    $provNombre = 'Carga Inicial / Sistema';
+                    if (!empty($lote->proveedor)) {
+                        $pRow = $this->db->where('id', intval($lote->proveedor))->get('proveedores')->row();
+                        if ($pRow && !empty($pRow->nombre)) $provNombre = $pRow->nombre;
+                    }
+
+                    $movimientos_iniciales_virtuales[] = (object)[
+                        'kardex_id' => 'INI-' . $lote->lote_id,
+                        'fecha' => $fecha_lote,
+                        'almacen_id' => $lote->almacen_id,
+                        'sucursal' => $lote->sucursal ?: 'General',
+                        'tipo' => 'Stock Inicial / Ingreso Lote #' . $lote->lote_id,
+                        'referencia_id' => 'LOTE-' . $lote->lote_id,
+                        'tipo_movimiento' => 'INGRESO',
+                        'cantidad' => $cant_ini,
+                        'lote_id' => $lote->lote_id,
+                        'proveedor_nombre' => $provNombre
+                    ];
                 }
             }
-            $saldo_anterior = $ingresos_anteriores - $egresos_anteriores;
         }
 
-        // 2. Obtener movimientos que aplican (si hay fecha, >= fecha; si no, desde el inicio)
+        // 2. Obtener movimientos reales de kardex
         $this->db->select('
             k.id as kardex_id,
             k.creado_at as fecha,
@@ -677,19 +709,50 @@ class Productos extends MY_Controller {
         $this->db->from('kardex k');
         $this->db->join('depositos d', 'k.almacen_id = d.id', 'left');
         $this->db->where('k.producto_id', $producto_id);
-        
-        if (!empty($fecha)) {
-            $this->db->where('DATE(k.creado_at) >=', $fecha);
-        }
         if ($almacen_id) {
             $this->db->where('k.almacen_id', $almacen_id);
         }
+        $movimientos_db = $this->db->get()->result();
 
-        $this->db->order_by('k.creado_at', 'ASC');
-        $this->db->order_by('k.id', 'ASC');
-        $movimientos = $this->db->get()->result();
+        // 3. Unir movimientos virtuales con los de kardex y ordenar cronológicamente
+        $todos_movimientos = array_merge($movimientos_iniciales_virtuales, $movimientos_db);
+        usort($todos_movimientos, function($a, $b) {
+            $tA = strtotime($a->fecha);
+            $tB = strtotime($b->fecha);
+            if ($tA == $tB) {
+                // Ingresos primero si coinciden en timestamp
+                $isIngresoA = in_array(strtoupper(trim($a->tipo_movimiento)), ['INGRESO', 'ENTRADA']) ? 0 : 1;
+                $isIngresoB = in_array(strtoupper(trim($b->tipo_movimiento)), ['INGRESO', 'ENTRADA']) ? 0 : 1;
+                return $isIngresoA <=> $isIngresoB;
+            }
+            return $tA <=> $tB;
+        });
 
-        // 3. Procesar y estructurar la información del Kardex
+        // 4. Procesar acumulados según filtro de fecha
+        $saldo_anterior = 0;
+        $ingresos_anteriores = 0;
+        $egresos_anteriores = 0;
+        $movimientos_filtrados = [];
+
+        foreach ($todos_movimientos as $m) {
+            $fecha_m = date('Y-m-d', strtotime($m->fecha));
+            $tipo_m = strtoupper(trim($m->tipo_movimiento));
+            $cant_m = floatval($m->cantidad);
+            $is_ingreso = ($tipo_m === 'INGRESO' || $tipo_m === 'ENTRADA');
+
+            if (!empty($fecha) && $fecha_m < $fecha) {
+                if ($is_ingreso) {
+                    $ingresos_anteriores += $cant_m;
+                } else {
+                    $egresos_anteriores += $cant_m;
+                }
+            } else {
+                $movimientos_filtrados[] = $m;
+            }
+        }
+        $saldo_anterior = $ingresos_anteriores - $egresos_anteriores;
+
+        // 5. Procesar y estructurar la información del Kardex
         $kardex_report = [];
         $saldo_acumulado = $saldo_anterior;
 
@@ -709,7 +772,7 @@ class Productos extends MY_Controller {
             ];
         }
 
-        foreach ($movimientos as $mov) {
+        foreach ($movimientos_filtrados as $mov) {
             $ingreso = null;
             $egreso = null;
             $nro_documento = $mov->referencia_id ? (string)$mov->referencia_id : '-';
@@ -732,7 +795,38 @@ class Productos extends MY_Controller {
             $concepto_raw = strtoupper(trim($mov->tipo ?? ''));
             $tipo_label = $mov->tipo;
 
-            if (stripos($concepto_raw, 'VENTA') !== false) {
+            if (stripos($concepto_raw, 'STOCK INICIAL') !== false || stripos($concepto_raw, 'LOTE #') !== false) {
+                $tipo_categoria = 'INICIAL';
+                $tipo_label = $mov->tipo;
+                $nro_documento = is_numeric($mov->kardex_id) ? 'INI-' . $mov->kardex_id : (string)$mov->kardex_id;
+                $cliente = !empty($mov->proveedor_nombre) ? 'Prov: ' . $mov->proveedor_nombre : 'Carga de Inventario';
+                $detalle_extra = 'Registro base del lote #' . $mov->lote_id;
+            } elseif (stripos($concepto_raw, 'AJUSTE') !== false) {
+                $tipo_categoria = 'AJUSTE';
+                if ($tipo_mov === 'INGRESO' || stripos($concepto_raw, '(+)') !== false) {
+                    $tipo_label = 'Ajuste de Inventario (Ingreso)';
+                } else {
+                    $tipo_label = 'Ajuste de Inventario (Egreso)';
+                }
+                $nro_documento = 'AJU-' . $mov->kardex_id;
+                
+                // Extraer usuario si está en el concepto [Por: Nombre]
+                $usuarioResp = 'Auditoría / Inventario';
+                if (preg_match('/\[Por:\s*(.*?)\]/i', $mov->tipo, $mUser)) {
+                    $usuarioResp = trim($mUser[1]);
+                } elseif ($mov->referencia_id) {
+                    $uRow = $this->db->where('id', intval($mov->referencia_id))->get('vendedores')->row();
+                    if ($uRow) $usuarioResp = $uRow->nombre;
+                }
+                $cliente = 'Resp: ' . $usuarioResp;
+                
+                // Extraer motivo
+                if (preg_match('/AJUSTE DE INVENTARIO \([+-]\)\s*:\s*(.*?)(?:\s*\[Por:|$)/i', $mov->tipo, $mMotivo)) {
+                    $detalle_extra = 'Motivo: ' . trim($mMotivo[1]);
+                } else {
+                    $detalle_extra = $mov->tipo;
+                }
+            } elseif (stripos($concepto_raw, 'VENTA') !== false) {
                 $tipo_label = 'Venta Realizada';
                 $tipo_categoria = 'VENTA';
                 if ($mov->referencia_id) {
@@ -787,10 +881,6 @@ class Productos extends MY_Controller {
                     $nro_documento = 'ANUL-' . $mov->referencia_id;
                     $cliente = 'Devolución a inventario';
                 }
-            } elseif (stripos($concepto_raw, 'STOCK INICIAL') !== false || stripos($concepto_raw, 'AJUSTE') !== false) {
-                $tipo_label = 'Ajuste / Stock Inicial';
-                $tipo_categoria = 'AJUSTE';
-                $cliente = 'Carga de Inventario';
             }
 
             $kardex_report[] = [

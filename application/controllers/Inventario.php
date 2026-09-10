@@ -29,7 +29,7 @@ class Inventario extends MY_Controller {
             MAX(p.descripcion) AS descripcion,
             COALESCE(MAX(inventarios.categoria), MAX(p.categoria)) AS categoria,
             COALESCE(MAX(inventarios.marca), MAX(p.marca)) AS marca,
-            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), "unid") AS unidad,
+            COALESCE(MAX(inventarios.unidad), MAX(p.subunidad), MAX(p.unidad), "unid") AS unidad,
             COALESCE(MAX(prov.nombre), MAX(inventarios.proveedor), MAX(p.proveedor), "No especificado") AS proveedor,
             COALESCE(SUM(inventarios.cantidad), 0) AS cantidad,
             MAX(p.precioventa) AS precioventa,
@@ -1226,6 +1226,7 @@ class Inventario extends MY_Controller {
             $lote_id = null;
             if ($loteExistente) {
                 $this->db->set('cantidad', 'cantidad + ' . $cantidad, FALSE);
+                $this->db->set('cantidad_inicial', 'cantidad_inicial + ' . $cantidad, FALSE);
                 $this->db->where('id', $loteExistente->id);
                 $this->db->update('inventarios');
                 $lote_id = $loteExistente->id;
@@ -1234,13 +1235,17 @@ class Inventario extends MY_Controller {
                     'idprod' => $prodMaster->idprod,
                     'descripcion' => $prodMaster->descripcion,
                     'marca' => $prodMaster->marca,
+                    'idmarca' => $prodMaster->idmarca ?? 0,
                     'categoria' => $prodMaster->categoria,
+                    'idcategoria' => $prodMaster->idcategoria ?? 0,
                     'unidad' => $prodMaster->subunidad ?: 'unid',
                     'proveedor' => $prodMaster->proveedor ?: '',
                     'imagenes' => $prodMaster->imagen ?: '',
                     'precioventa' => $prodMaster->precioventa,
                     'preciolocal' => $prodMaster->preciolocal,
+                    'preciomayor' => $prodMaster->nuevoprecio ?? $prodMaster->precioventa,
                     'cantidad' => $cantidad,
+                    'cantidad_inicial' => $cantidad,
                     'comision' => $prodMaster->comision ?: 0,
                     'deposito' => $deposito_id,
                     'fecha_ingreso' => $fecha_bd
@@ -1348,14 +1353,151 @@ class Inventario extends MY_Controller {
                 ->set_output(json_encode(['error' => 'Error al guardar el ajuste de inventario en la base de datos.']));
         }
 
+        // Obtener datos del depósito y último registro kardex
+        $depObj = $this->db->where('id', $deposito_id)->get('depositos')->row();
+        $sucursal_nombre = $depObj ? $depObj->nombre : 'Sucursal ' . $deposito_id;
+
         return $this->output
             ->set_content_type('application/json')
             ->set_status_header(200)
             ->set_output(json_encode([
                 'message' => 'Ajuste de inventario registrado exitosamente.',
-                'tipo' => $tipo,
-                'cantidad' => $cantidad,
-                'idprod' => $idprod
+                'ajuste' => [
+                    'idprod' => $idprod,
+                    'descripcion' => $prodMaster->descripcion,
+                    'unidad' => $prodMaster->subunidad ?: 'unid',
+                    'tipo' => $tipo,
+                    'cantidad' => $cantidad,
+                    'motivo' => $motivo,
+                    'fecha' => $fecha_bd,
+                    'sucursal_id' => $deposito_id,
+                    'sucursal_nombre' => $sucursal_nombre,
+                    'usuario_id' => $usuario_id,
+                    'usuario_nombre' => $usuario_nombre,
+                    'preciolocal' => $prodMaster->preciolocal,
+                    'precioventa' => $prodMaster->precioventa
+                ]
+            ]));
+    }
+
+    /**
+     * Lista el historial de ajustes de inventario registrados en el Kardex
+     */
+    public function listar_ajustes() {
+        $this->check_permission('Inventario', 'ver');
+
+        $search = $this->input->get('q');
+        $depId = $this->input->get('deposito');
+        $tipo = $this->input->get('tipo'); // 'all', 'INGRESO', 'EGRESO'
+        $fechaInicio = $this->input->get('fecha_inicio');
+        $fechaFin = $this->input->get('fecha_fin');
+        $page = $this->input->get('page') ? intval($this->input->get('page')) : 1;
+        $limit = $this->input->get('limit') ? intval($this->input->get('limit')) : 20;
+        $offset = ($page - 1) * $limit;
+
+        $this->db->start_cache();
+        $this->db->select('
+            k.id,
+            k.producto_id,
+            k.almacen_id,
+            k.lote_id,
+            k.cantidad,
+            k.concepto,
+            k.tipo_movimiento,
+            k.referencia_id as usuario_id,
+            k.creado_at,
+            p.idprod,
+            p.descripcion as producto_descripcion,
+            p.unidad,
+            p.subunidad,
+            p.precioventa,
+            p.preciolocal,
+            d.nombre as almacen_nombre,
+            v.nombre as usuario_nombre
+        ');
+        $this->db->from('kardex k');
+        $this->db->join('productos p', 'k.producto_id = p.id', 'inner');
+        $this->db->join('depositos d', 'k.almacen_id = d.id', 'left');
+        $this->db->join('vendedores v', 'k.referencia_id = v.id', 'left');
+        $this->db->like('k.concepto', 'AJUSTE DE INVENTARIO', 'after');
+
+        if (!empty($depId) && $depId !== 'all') {
+            $this->db->where('k.almacen_id', intval($depId));
+        }
+
+        if (!empty($tipo) && $tipo !== 'all') {
+            $this->db->where('k.tipo_movimiento', strtoupper(trim($tipo)));
+        }
+
+        if (!empty($fechaInicio)) {
+            $this->db->where('DATE(k.creado_at) >=', $fechaInicio);
+        }
+        if (!empty($fechaFin)) {
+            $this->db->where('DATE(k.creado_at) <=', $fechaFin);
+        }
+
+        if (!empty($search)) {
+            $search = trim($search);
+            $this->db->group_start();
+            $this->db->like('p.idprod', $search);
+            $this->db->or_like('p.descripcion', $search);
+            $this->db->or_like('k.concepto', $search);
+            $this->db->or_like('v.nombre', $search);
+            $this->db->group_end();
+        }
+        $this->db->stop_cache();
+
+        $total = $this->db->count_all_results();
+
+        $this->db->order_by('k.creado_at', 'DESC');
+        $this->db->order_by('k.id', 'DESC');
+        $this->db->limit($limit, $offset);
+        $result = $this->db->get()->result_array();
+        $this->db->flush_cache();
+
+        // Formatear resultados para frontend
+        $data = array_map(function($row) {
+            $usuario = trim($row['usuario_nombre'] ?? '');
+            if (empty($usuario)) {
+                $usuario = 'Usuario ' . ($row['usuario_id'] ?: 'N/A');
+            }
+
+            // Extraer motivo limpio del concepto
+            $conceptoRaw = $row['concepto'];
+            $motivoLimpio = $conceptoRaw;
+            if (preg_match('/AJUSTE DE INVENTARIO \([+-]\)\s*:\s*(.*?)(?:\s*\[Por:|$)/i', $conceptoRaw, $matches)) {
+                $motivoLimpio = trim($matches[1]);
+            }
+
+            return [
+                'id' => $row['id'],
+                'producto_id' => $row['producto_id'],
+                'idprod' => $row['idprod'],
+                'descripcion' => $row['producto_descripcion'],
+                'unidad' => $row['subunidad'] ?: ($row['unidad'] ?: 'unid'),
+                'tipo' => $row['tipo_movimiento'],
+                'cantidad' => floatval($row['cantidad']),
+                'concepto' => $row['concepto'],
+                'motivo' => $motivoLimpio,
+                'sucursal_id' => $row['almacen_id'],
+                'sucursal_nombre' => $row['almacen_nombre'] ?: 'Sucursal ' . $row['almacen_id'],
+                'usuario_id' => $row['usuario_id'],
+                'usuario_nombre' => $usuario,
+                'preciolocal' => floatval($row['preciolocal']),
+                'precioventa' => floatval($row['precioventa']),
+                'fecha' => $row['creado_at']
+            ];
+        }, $result);
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_status_header(200)
+            ->set_output(json_encode([
+                'status' => 'success',
+                'data' => $data,
+                'total' => $total,
+                'pages' => ceil($total / $limit),
+                'current_page' => $page
             ]));
     }
 }
