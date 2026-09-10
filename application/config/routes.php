@@ -52,3 +52,11 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 $route['default_controller'] = 'welcome';
 $route['404_override'] = '';
 $route['translate_uri_dashes'] = FALSE;
+
+// Mapeo de rutas para Control Métricas (Compatibilidad Linux/Apache)
+$route['controlmetricas/(:any)'] = 'ControlMetricas/$1';
+$route['controlmetricas'] = 'ControlMetricas';
+$route['control-metricas/(:any)'] = 'ControlMetricas/$1';
+$route['control-metricas'] = 'ControlMetricas';
+$route['ControlMetricas/(:any)'] = 'ControlMetricas/$1';
+$route['ControlMetricas'] = 'ControlMetricas';
