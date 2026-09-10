@@ -120,7 +120,7 @@ class ControlMetricas extends CI_Controller {
      * Calcula días hábiles (Lunes a Sábado) en un mes y días transcurridos
      */
     private function calcular_dias_mes($anio, $mes) {
-        $totalDias = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
+        $totalDias = intval(date('t', strtotime(sprintf('%04d-%02d-01', $anio, $mes))));
         $diasHabiles = 0;
         $diasTrabajados = 0;
         
@@ -250,7 +250,7 @@ class ControlMetricas extends CI_Controller {
 
         // Rango de fechas para el mes analizado
         $fechaInicio = sprintf('%04d-%02d-01 00:00:00', $anio, $mes);
-        $totalDiasMes = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
+        $totalDiasMes = intval(date('t', strtotime(sprintf('%04d-%02d-01', $anio, $mes))));
         $fechaFin = sprintf('%04d-%02d-%02d 23:59:59', $anio, $mes, $totalDiasMes);
 
         // 4. Calcular métricas dinámicas para cada usuario/sucursal
