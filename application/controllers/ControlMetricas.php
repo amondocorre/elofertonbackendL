@@ -22,93 +22,97 @@ class ControlMetricas extends CI_Controller {
      * Inicializa las tablas y columnas necesarias para el módulo de métricas y registro de reclutadores
      */
     private function inicializar_tablas() {
-        // 1. Asegurar columna 'registrado_por' en tabla vendedores
-        if ($this->db->table_exists('vendedores')) {
-            $fields = $this->db->list_fields('vendedores');
-            if (!in_array('registrado_por', $fields)) {
-                $this->db->query("ALTER TABLE `vendedores` ADD COLUMN `registrado_por` INT(11) NULL DEFAULT NULL AFTER `ciudad`");
-            }
-        }
-
-        // 2. Crear tabla para almacenar metas y ajustes mensuales de métricas
-        $this->db->query("CREATE TABLE IF NOT EXISTS `metricas_gerencia_mensual` (
-            `id` INT(11) NOT NULL AUTO_INCREMENT,
-            `anio` INT(4) NOT NULL,
-            `mes` INT(2) NOT NULL,
-            `vendedor_id` INT(11) NOT NULL,
-            `tipo_usuario` ENUM('encargado', 'vendedor') DEFAULT 'encargado',
-            `ventas_dinero_meta` DECIMAL(12,2) DEFAULT 0.00,
-            `ventas_transacciones_meta` INT(11) DEFAULT 0,
-            `vend_obj_meta` INT(11) DEFAULT 0,
-            `vendedores_nuevos_meta` INT(11) DEFAULT 0,
-            `ventas_mes_meta` INT(11) DEFAULT 0,
-            `estado` ENUM('activo', 'excluido') DEFAULT 'activo',
-            `creado_por` INT(11) DEFAULT NULL,
-            `fecha_registro` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            `fecha_actualizacion` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_periodo_vendedor` (`anio`, `mes`, `vendedor_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
-
-        // Asegurar columna estado si la tabla ya existía
-        if ($this->db->table_exists('metricas_gerencia_mensual')) {
-            $mFields = $this->db->list_fields('metricas_gerencia_mensual');
-            if (!in_array('estado', $mFields)) {
-                $this->db->query("ALTER TABLE `metricas_gerencia_mensual` ADD COLUMN `estado` ENUM('activo', 'excluido') DEFAULT 'activo' AFTER `ventas_mes_meta`");
-            }
-        }
-
-        // 3. Crear tabla para configuración global del mes (días hábiles y trabajados editables)
-        $this->db->query("CREATE TABLE IF NOT EXISTS `metricas_config_mes` (
-            `id` INT(11) NOT NULL AUTO_INCREMENT,
-            `anio` INT(4) NOT NULL,
-            `mes` INT(2) NOT NULL,
-            `dias_habiles` INT(3) NOT NULL,
-            `dias_trabajados` INT(3) NOT NULL,
-            `actualizado_por` INT(11) DEFAULT NULL,
-            `fecha_actualizacion` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_periodo_mes` (`anio`, `mes`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
-
-        // 4. Registrar en la tabla modulos_menu para que aparezca en el panel de Roles y Permisos de SISVEN
-        if ($this->db->table_exists('modulos_menu')) {
-            $modExiste = $this->db->group_start()
-                ->where('nombre_modulo', 'Control Métricas')
-                ->or_where('url', 'Control Métricas')
-                ->group_end()
-                ->get('modulos_menu')
-                ->row();
-
-            $sistemaId = 1;
-            if ($this->db->table_exists('sistemas')) {
-                $sisRow = $this->db->get_where('sistemas', ['nombre_sistema' => 'SISVEN'])->row();
-                if ($sisRow) $sistemaId = $sisRow->id;
-            }
-
-            if (!$modExiste) {
-                $this->db->insert('modulos_menu', [
-                    'nombre_modulo' => 'Control Métricas',
-                    'url' => 'Control Métricas',
-                    'icono' => '🎯',
-                    'id_padre' => 0,
-                    'orden' => 15,
-                    'id_sistema' => $sistemaId
-                ]);
-                $moduloId = $this->db->insert_id();
-
-                // Asignar permisos automáticos al rol Administrador (id_rol = 1)
-                if ($this->db->table_exists('permisos_roles') && $moduloId) {
-                    $this->db->insert('permisos_roles', [
-                        'id_rol' => 1,
-                        'id_modulo' => $moduloId,
-                        'ver' => 1,
-                        'crear' => 1,
-                        'editar' => 1,
-                        'eliminar' => 1
-                    ]);
+        try {
+            // 1. Asegurar columna 'registrado_por' en tabla vendedores
+            if ($this->db->table_exists('vendedores')) {
+                $fields = $this->db->list_fields('vendedores');
+                if (!in_array('registrado_por', $fields)) {
+                    $this->db->query("ALTER TABLE `vendedores` ADD COLUMN `registrado_por` INT(11) NULL DEFAULT NULL AFTER `ciudad`");
                 }
             }
+
+            // 2. Crear tabla para almacenar metas y ajustes mensuales de métricas
+            $this->db->query("CREATE TABLE IF NOT EXISTS `metricas_gerencia_mensual` (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `anio` INT(4) NOT NULL,
+                `mes` INT(2) NOT NULL,
+                `vendedor_id` INT(11) NOT NULL,
+                `tipo_usuario` ENUM('encargado', 'vendedor') DEFAULT 'encargado',
+                `ventas_dinero_meta` DECIMAL(12,2) DEFAULT 0.00,
+                `ventas_transacciones_meta` INT(11) DEFAULT 0,
+                `vend_obj_meta` INT(11) DEFAULT 0,
+                `vendedores_nuevos_meta` INT(11) DEFAULT 0,
+                `ventas_mes_meta` INT(11) DEFAULT 0,
+                `estado` ENUM('activo', 'excluido') DEFAULT 'activo',
+                `creado_por` INT(11) DEFAULT NULL,
+                `fecha_registro` DATETIME DEFAULT CURRENT_TIMESTAMP,
+                `fecha_actualizacion` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_periodo_vendedor` (`anio`, `mes`, `vendedor_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+            // Asegurar columna estado si la tabla ya existía
+            if ($this->db->table_exists('metricas_gerencia_mensual')) {
+                $mFields = $this->db->list_fields('metricas_gerencia_mensual');
+                if (!in_array('estado', $mFields)) {
+                    $this->db->query("ALTER TABLE `metricas_gerencia_mensual` ADD COLUMN `estado` ENUM('activo', 'excluido') DEFAULT 'activo' AFTER `ventas_mes_meta`");
+                }
+            }
+
+            // 3. Crear tabla para configuración global del mes (días hábiles y trabajados editables)
+            $this->db->query("CREATE TABLE IF NOT EXISTS `metricas_config_mes` (
+                `id` INT(11) NOT NULL AUTO_INCREMENT,
+                `anio` INT(4) NOT NULL,
+                `mes` INT(2) NOT NULL,
+                `dias_habiles` INT(3) NOT NULL,
+                `dias_trabajados` INT(3) NOT NULL,
+                `actualizado_por` INT(11) DEFAULT NULL,
+                `fecha_actualizacion` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_periodo_mes` (`anio`, `mes`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+            // 4. Registrar en la tabla modulos_menu para que aparezca en el panel de Roles y Permisos de SISVEN
+            if ($this->db->table_exists('modulos_menu')) {
+                $modExiste = $this->db->group_start()
+                    ->where('nombre_modulo', 'Control Métricas')
+                    ->or_where('url', 'Control Métricas')
+                    ->group_end()
+                    ->get('modulos_menu')
+                    ->row();
+
+                $sistemaId = 1;
+                if ($this->db->table_exists('sistemas')) {
+                    $sisRow = $this->db->get_where('sistemas', ['nombre_sistema' => 'SISVEN'])->row();
+                    if ($sisRow) $sistemaId = $sisRow->id;
+                }
+
+                if (!$modExiste) {
+                    $this->db->insert('modulos_menu', [
+                        'nombre_modulo' => 'Control Métricas',
+                        'url' => 'Control Métricas',
+                        'icono' => '🎯',
+                        'id_padre' => null,
+                        'orden' => 15,
+                        'id_sistema' => $sistemaId
+                    ]);
+                    $moduloId = $this->db->insert_id();
+
+                    // Asignar permisos automáticos al rol Administrador (id_rol = 1)
+                    if ($this->db->table_exists('permisos_roles') && $moduloId) {
+                        $this->db->insert('permisos_roles', [
+                            'id_rol' => 1,
+                            'id_modulo' => $moduloId,
+                            'ver' => 1,
+                            'crear' => 1,
+                            'editar' => 1,
+                            'eliminar' => 1
+                        ]);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            log_message('error', 'Error en inicializar_tablas ControlMetricas: ' . $e->getMessage());
         }
     }
 
