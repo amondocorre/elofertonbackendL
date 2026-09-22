@@ -90,10 +90,12 @@ class Marcas extends MY_Controller {
                        SUM(inv.cantidad) as total_stock
                 FROM productos p
                 JOIN (
-                    SELECT idprod, SUM(cantidad) as cantidad 
-                    FROM inventarios 
-                    GROUP BY idprod 
-                    HAVING SUM(cantidad) > 0
+                    SELECT i.idprod, SUM(i.cantidad) as cantidad 
+                    FROM inventarios i
+                    JOIN depositos d ON i.deposito = d.id
+                    WHERE LOWER(d.estado) = 'activo' AND d.tipo_almacen = 'Sucursal_Venta'
+                    GROUP BY i.idprod 
+                    HAVING SUM(i.cantidad) > 0
                 ) inv ON p.idprod = inv.idprod
                 LEFT JOIN marcas m ON p.idmarca = m.id
                 WHERE p.estado = 'Activo' AND COALESCE(p.comision, 0) > 0
@@ -138,11 +140,13 @@ class Marcas extends MY_Controller {
         ", FALSE);
         $this->db->from('productos p');
         $this->db->join('inventarios i', 'p.idprod = i.idprod', 'inner');
-        $this->db->join('depositos d', 'i.deposito = d.id', 'left');
+        $this->db->join('depositos d', 'i.deposito = d.id', 'inner');
         $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
         $this->db->where('p.estado', 'Activo');
         $this->db->where('COALESCE(p.comision, 0) >', 0);
         $this->db->where('i.cantidad >', 0);
+        $this->db->where('LOWER(d.estado)', 'activo');
+        $this->db->where('d.tipo_almacen', 'Sucursal_Venta');
 
         if ($marca === '-SIN MARCA') {
             $this->db->group_start();
@@ -154,8 +158,28 @@ class Marcas extends MY_Controller {
             $this->db->where('m.nombre', $marca);
         }
 
-        $this->db->order_by('p.descripcion', 'ASC');
+        $q = trim($this->input->get('q') ?? '');
+        if (!empty($q)) {
+            $words = array_values(array_filter(preg_split('/\s+/', $q), function($w) {
+                return trim($w) !== '';
+            }));
+
+            if (!empty($words)) {
+                $this->db->group_start();
+                foreach ($words as $word) {
+                    $word_escaped = $this->db->escape_like_str($word);
+                    $this->db->group_start();
+                    $this->db->like('p.descripcion', $word_escaped);
+                    $this->db->or_like('p.idprod', $word_escaped);
+                    $this->db->or_like('d.nombre', $word_escaped);
+                    $this->db->group_end();
+                }
+                $this->db->group_end();
+            }
+        }
+
         $this->db->order_by('d.nombre', 'ASC');
+        $this->db->order_by('p.descripcion', 'ASC');
 
         $query = $this->db->get();
         $productos = $query->result();

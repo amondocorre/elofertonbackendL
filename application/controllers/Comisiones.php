@@ -29,7 +29,7 @@ class Comisiones extends MY_Controller {
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v_sale.vendedor USING utf8mb4), '0'), CONVERT(v_sale.idusr USING utf8mb4))";
 
         // Obtener IDs de vendedores y sus nombres
-        $this->db->select($vendedor_expr . ' as vendedor_id, MAX(v.nombre) as vendedor_nombre, MAX(v.carnet) as carnet, MAX(v.nro_cuenta) as nro_cuenta, MAX(v.banco) as banco, MAX(v.ciudad) as sucursal_id, MAX(d.nombre) as sucursal_nombre, SUM(dv.comision * dv.cuantos) as total_comision, COUNT(dv.id) as cantidad_productos, DATE_FORMAT(MAX(dv.pagocomision), "%d/%m/%Y %H:%i") as fecha_pago', FALSE);
+        $this->db->select($vendedor_expr . ' as vendedor_id, MAX(v.nombre) as vendedor_nombre, MAX(v.carnet) as carnet, MAX(v.nro_cuenta) as nro_cuenta, MAX(v.banco) as banco, MAX(v.ciudad) as sucursal_id, MAX(d.nombre) as sucursal_nombre, SUM(dv.comision) as total_comision, COUNT(dv.id) as cantidad_productos, DATE_FORMAT(MAX(dv.pagocomision), "%d/%m/%Y %H:%i") as fecha_pago', FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v_sale', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v_sale.idventa USING utf8mb4)', 'left', FALSE);
         $this->db->join('vendedores v', $vendedor_expr . ' = v.id', 'left', FALSE);
@@ -100,7 +100,7 @@ class Comisiones extends MY_Controller {
 
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
-        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago, vend.nombre as vendedor_nombre, vend.telefono as vendedor_telefono, v.cliente, v.telefono as cliente_telefono", FALSE);
+        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, (CASE WHEN dv.cuantos > 0 THEN (dv.comision / dv.cuantos) ELSE dv.comision END) as comision, dv.comision as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago, vend.nombre as vendedor_nombre, vend.telefono as vendedor_telefono, v.cliente, v.telefono as cliente_telefono", FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)', 'left', FALSE);
         $this->db->join('proformas prof', 'CONVERT(v.idventa USING utf8mb4) = CONVERT(prof.idproforma USING utf8mb4) OR CONVERT(v.idventa USING utf8mb4) = CONVERT(prof.id USING utf8mb4) OR v.id = prof.id', 'left', FALSE);
@@ -135,7 +135,7 @@ class Comisiones extends MY_Controller {
     public function ventas_sin_vendedor() {
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
-        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, dv.comision, (dv.comision * dv.cuantos) as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, COALESCE(d.nombre, 'Sucursal') as sucursal_nombre, COALESCE(v.cliente, vend.nombre, 'SIN CLIENTE') as cliente, COALESCE(v.telefono, vend.telefono, '') as cliente_telefono, COALESCE(vend.nombre, v.cliente, 'ENCARGADO DE TIENDA') as encargado_nombre, COALESCE(vend.telefono, v.telefono, '') as encargado_telefono", FALSE);
+        $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, (CASE WHEN dv.cuantos > 0 THEN (dv.comision / dv.cuantos) ELSE dv.comision END) as comision, dv.comision as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, COALESCE(d.nombre, 'Sucursal') as sucursal_nombre, COALESCE(v.cliente, vend.nombre, 'SIN CLIENTE') as cliente, COALESCE(v.telefono, vend.telefono, '') as cliente_telefono, COALESCE(vend.nombre, v.cliente, 'ENCARGADO DE TIENDA') as encargado_nombre, COALESCE(vend.telefono, v.telefono, '') as encargado_telefono", FALSE);
         $this->db->from('detalleventas dv');
         $this->db->join('ventas v', 'CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)', 'left', FALSE);
         $this->db->join('vendedores vend', $vendedor_expr . ' = vend.id', 'left', FALSE);
@@ -302,20 +302,33 @@ class Comisiones extends MY_Controller {
         foreach ($confirmados as $c) {
             $vend_id = intval($c['vendedor_id']);
             
-            // 1. Actualizar el registro del historial a 'Confirmado'
+            // 1. Obtener la fecha de corte registrada al generar el archivo Excel
+            $lote = $this->db->get_where('historial_pagos_comisiones', [
+                'vendedor_id' => $vend_id,
+                'estado'      => 'Pendiente_Confirmar'
+            ])->row();
+
+            $fecha_corte = $lote ? $lote->fecha_generacion : $hoy;
+
+            // 2. Actualizar el registro del historial a 'Confirmado'
             $this->db->where('vendedor_id', $vend_id);
             $this->db->where('estado', 'Pendiente_Confirmar');
             $this->db->update('historial_pagos_comisiones', [
-                'estado' => 'Confirmado',
-                'usuario_confirmo' => $usuario_id,
+                'estado'             => 'Confirmado',
+                'usuario_confirmo'   => $usuario_id,
                 'fecha_confirmacion' => $hoy
             ]);
 
-            // 2. Marcar como pagados los productos en detalleventas
-            $this->db->where('vendedor', $vend_id);
-            $this->db->where('comision >', 0);
-            $this->db->where('pagocomision IS NULL');
-            $this->db->update('detalleventas', ['pagocomision' => $hoy]);
+            // 3. Marcar como pagados SOLO los productos vendidos HASTA la fecha de corte (generación del Excel)
+            $sql_update = "UPDATE detalleventas dv
+                           INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                           SET dv.pagocomision = ?
+                           WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?
+                             AND dv.comision > 0
+                             AND dv.pagocomision IS NULL
+                             AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
+                             AND v.fecha <= ?";
+            $this->db->query($sql_update, [$hoy, (string)$vend_id, $fecha_corte]);
         }
 
         // Procesar rechazados (se eliminan del historial de pagos masivos para volver a listarse en pendientes)
@@ -380,4 +393,85 @@ class Comisiones extends MY_Controller {
             ->set_content_type('application/json')
             ->set_output(json_encode($resultados));
     }
+
+    /**
+     * Revierte el pago de comisiones de un vendedor, de un registro de historial o de una venta específica,
+     * regresándola al estado pendiente.
+     * POST /comisiones/revertir_pago
+     */
+    public function revertir_pago() {
+        $this->check_permission('Comisiones', 'editar');
+        $data = json_decode(file_get_contents('php://input'), true);
+
+        $vendedor_id  = !empty($data['vendedor_id']) ? intval($data['vendedor_id']) : null;
+        $id_detalle   = !empty($data['id_detalle']) ? intval($data['id_detalle']) : null;
+        $idventa      = !empty($data['idventa']) ? trim($data['idventa']) : null;
+        $historial_id = !empty($data['historial_id']) ? intval($data['historial_id']) : null;
+
+        if (!$vendedor_id && !$id_detalle && !$idventa && !$historial_id) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Parámetros insuficientes para revertir la comisión.']));
+        }
+
+        $this->db->trans_start();
+
+        // 1. Revertir por ítem específico de detalleventas
+        if ($id_detalle) {
+            $this->db->where('id', $id_detalle);
+            $this->db->update('detalleventas', ['pagocomision' => null]);
+        }
+        // 2. Revertir por idventa
+        elseif ($idventa) {
+            $this->db->where('idventa', $idventa);
+            $this->db->update('detalleventas', ['pagocomision' => null]);
+        }
+        // 3. Revertir por registro específico del historial
+        elseif ($historial_id) {
+            $pago = $this->db->get_where('historial_pagos_comisiones', ['id' => $historial_id])->row();
+            if ($pago) {
+                // Volver a NULL los productos que se pagaron en esa confirmación
+                if ($pago->fecha_confirmacion) {
+                    $this->db->query("UPDATE detalleventas dv
+                                      INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                                      SET dv.pagocomision = NULL
+                                      WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?
+                                        AND dv.pagocomision = ?", [(string)$pago->vendedor_id, $pago->fecha_confirmacion]);
+                } else {
+                    $this->db->query("UPDATE detalleventas dv
+                                      INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                                      SET dv.pagocomision = NULL
+                                      WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?", [(string)$pago->vendedor_id]);
+                }
+                $this->db->where('id', $historial_id);
+                $this->db->delete('historial_pagos_comisiones');
+            }
+        }
+        // 4. Revertir por vendedor completo
+        elseif ($vendedor_id) {
+            $this->db->query("UPDATE detalleventas dv
+                              INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                              SET dv.pagocomision = NULL
+                              WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?
+                                AND dv.pagocomision IS NOT NULL", [(string)$vendedor_id]);
+
+            $this->db->where('vendedor_id', $vendedor_id);
+            $this->db->delete('historial_pagos_comisiones');
+        }
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Error en base de datos al revertir la comisión.']));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['message' => 'Comisión revertida a pendientes con éxito.']));
+    }
 }
+

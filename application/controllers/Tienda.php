@@ -203,14 +203,24 @@ class Tienda extends CI_Controller {
             }
 
             if (!empty($q)) {
-                $search_escaped = $this->db->escape_like_str(trim($q));
-                $this->db->group_start();
-                $this->db->like('p.descripcion', $search_escaped, 'both', FALSE);
-                $this->db->or_like('p.idprod', $search_escaped, 'both', FALSE);
-                $this->db->or_like('m.nombre', $search_escaped, 'both', FALSE);
-                $this->db->or_like('c.descripcion', $search_escaped, 'both', FALSE);
-                $this->db->or_like('sc.nombre', $search_escaped, 'both', FALSE);
-                $this->db->group_end();
+                $words = array_values(array_filter(preg_split('/\s+/', trim($q)), function($w) {
+                    return trim($w) !== '';
+                }));
+
+                if (!empty($words)) {
+                    $this->db->group_start();
+                    foreach ($words as $word) {
+                        $word_escaped = $this->db->escape_like_str($word);
+                        $this->db->group_start();
+                        $this->db->like('p.descripcion', $word_escaped, 'both', FALSE);
+                        $this->db->or_like('p.idprod', $word_escaped, 'both', FALSE);
+                        $this->db->or_like('m.nombre', $word_escaped, 'both', FALSE);
+                        $this->db->or_like('c.descripcion', $word_escaped, 'both', FALSE);
+                        $this->db->or_like('sc.nombre', $word_escaped, 'both', FALSE);
+                        $this->db->group_end();
+                    }
+                    $this->db->group_end();
+                }
             }
 
             $this->db->group_by('p.idprod');
@@ -412,6 +422,12 @@ class Tienda extends CI_Controller {
                 'metodo_transferencia' => $config_db['metodo_transferencia'] ?? 1,
                 'metodo_qrbisa' => $config_db['metodo_qrbisa'] ?? 1,
                 'metodo_qrmercantil' => $config_db['metodo_qrmercantil'] ?? 1,
+                'web_btn_inicio' => (int)($config_db['web_btn_inicio'] ?? 1),
+                'web_btn_vista_clasica' => (int)($config_db['web_btn_vista_clasica'] ?? 1),
+                'web_btn_comisiones' => (int)($config_db['web_btn_comisiones'] ?? 1),
+                'web_btn_saldos_link' => (int)($config_db['web_btn_saldos_link'] ?? 1),
+                'web_btn_proformas' => (int)($config_db['web_btn_proformas'] ?? 1),
+                'web_btn_incentivos' => (int)($config_db['web_btn_incentivos'] ?? 1),
                 'sucursales' => $sucursales
             ];
             return $this->output
@@ -1141,11 +1157,22 @@ class Tienda extends CI_Controller {
             }
 
             if (!empty($q)) {
-                $this->db->group_start();
-                $this->db->like('p.descripcion', $q);
-                $this->db->or_like('p.idprod', $q);
-                $this->db->or_like('m.nombre', $q);
-                $this->db->group_end();
+                $words = array_values(array_filter(preg_split('/\s+/', trim($q)), function($w) {
+                    return trim($w) !== '';
+                }));
+
+                if (!empty($words)) {
+                    $this->db->group_start();
+                    foreach ($words as $word) {
+                        $word_escaped = $this->db->escape_like_str($word);
+                        $this->db->group_start();
+                        $this->db->like('p.descripcion', $word_escaped, 'both', FALSE);
+                        $this->db->or_like('p.idprod', $word_escaped, 'both', FALSE);
+                        $this->db->or_like('m.nombre', $word_escaped, 'both', FALSE);
+                        $this->db->group_end();
+                    }
+                    $this->db->group_end();
+                }
             }
 
             $this->db->group_by('p.idprod');

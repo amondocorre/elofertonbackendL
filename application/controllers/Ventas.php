@@ -412,12 +412,21 @@ class Ventas extends CI_Controller {
         // Iniciar transacción
         $this->db->trans_start();
 
-        // Verificar si la venta proviene de una proforma ya pagada en la web
+        // Verificar si la venta proviene de una proforma ya pagada en la web (sin cobro en mostrador)
         $isWebPaid = false;
         if (!empty($data['origen_proforma_id'])) {
             $proforma = $this->db->where('idproforma', $data['origen_proforma_id'])->get('proformas')->row();
             if ($proforma && (strtolower($proforma->estado) === 'pagado' || strtolower($proforma->estado) === 'pagado 100%')) {
-                $isWebPaid = true;
+                $formapagoLower = strtolower(trim($data['formapago'] ?? ''));
+                $pagomixtoLower = strtolower(trim($data['pagomixto'] ?? ''));
+                $tienePagoLocal = (strpos($formapagoLower, 'efectivo') !== false) || 
+                                  (strpos($pagomixtoLower, 'efectivo') !== false) ||
+                                  (strpos($formapagoLower, 'qr') !== false) ||
+                                  (strpos($formapagoLower, 'tarjeta') !== false);
+
+                if (!$tienePagoLocal && ($formapagoLower === 'web' || $formapagoLower === 'tienda_web')) {
+                    $isWebPaid = true;
+                }
             }
         }
 
@@ -1012,6 +1021,59 @@ class Ventas extends CI_Controller {
     }
 
     /**
+     * Actualiza el método / forma de pago de una venta.
+     */
+    public function actualizar_formapago() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        $idventa = $data['idventa'] ?? null;
+        $formapago = isset($data['formapago']) ? trim($data['formapago']) : null;
+        $pagomixto = isset($data['pagomixto']) ? $data['pagomixto'] : null;
+
+        if (empty($idventa) || empty($formapago)) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Faltan datos requeridos (idventa y método de pago).']));
+        }
+
+        $this->db->trans_start();
+
+        $updateData = ['formapago' => $formapago];
+        if (array_key_exists('pagomixto', $data)) {
+            $updateData['pagomixto'] = $pagomixto;
+        }
+
+        // Actualizar en ventas
+        $this->db->where('idventa', $idventa);
+        $this->db->update('ventas', $updateData);
+
+        // Actualizar en proformas si corresponde
+        $venta = $this->db->where('idventa', $idventa)->get('ventas')->row();
+        if ($venta && !empty($venta->idproforma)) {
+            $updateProforma = ['formapago' => $formapago];
+            if (array_key_exists('pagomixto', $data)) {
+                $updateProforma['pagomixto'] = $pagomixto;
+            }
+            $this->db->where('idproforma', $venta->idproforma);
+            $this->db->update('proformas', $updateProforma);
+        }
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return $this->output
+                ->set_status_header(500)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Error al actualizar el tipo de pago.']));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode(['status' => 'success', 'message' => 'Tipo de pago actualizado correctamente.']));
+    }
+
+    /**
      * Anula una venta, revierte el stock del inventario y registra la operacion en Kardex.
      */
     public function anular_venta() {
@@ -1388,16 +1450,19 @@ class Ventas extends CI_Controller {
         $shiftSales = [];
         $fecha_ap_server = null;
 
-        // 1. Buscar en la nueva tabla sesiones_caja si hay un turno abierto para el usuario
+        // 1. Buscar en la nueva tabla sesiones_caja si hay un turno abierto para el usuario en este depósito/sucursal
         $caja = null;
         if ($usuario_id) {
             $caja = $this->db->where('usuario_id', $usuario_id)
+                             ->where('sucursal_id', $deposito)
                              ->where('estado', 'Abierta')
+                             ->order_by('id', 'DESC')
                              ->get('sesiones_caja')
                              ->row();
         } else {
-            // Fallback: buscar la última caja abierta activa de cualquier usuario en el sistema
-            $caja = $this->db->where('estado', 'Abierta')
+            // Fallback: buscar la última caja abierta activa de la sucursal
+            $caja = $this->db->where('sucursal_id', $deposito)
+                             ->where('estado', 'Abierta')
                              ->order_by('id', 'DESC')
                              ->get('sesiones_caja')
                              ->row();
@@ -1843,17 +1908,19 @@ class Ventas extends CI_Controller {
                 ->set_output(json_encode(['error' => 'No se pudo actualizar el registro de transporte: ' . ($dbError['message'] ?? 'Error de base de datos')]));
         }
 
-        // Obtener el ID del cajero (vendedor) que registró la venta original
-        $venta = $this->db->select('idusr')->where('idventa', $registro->idventa)->get('ventas')->row();
+        // Obtener el ID del cajero y sucursal que registró la venta original
+        $venta = $this->db->select('idusr, idneg')->where('idventa', $registro->idventa)->get('ventas')->row();
         $cajeroId = $venta ? intval($venta->idusr) : 0;
+        $sucursalId = $venta ? $venta->idneg : null;
 
         // Registrar movimiento de egreso en la caja abierta del cajero si existe
         $caja = null;
         if ($cajeroId > 0) {
-            $caja = $this->db->where('usuario_id', $cajeroId)
-                             ->where('estado', 'Abierta')
-                             ->get('sesiones_caja')
-                             ->row();
+            $this->db->where('usuario_id', $cajeroId)->where('estado', 'Abierta');
+            if ($sucursalId) {
+                $this->db->where('sucursal_id', $sucursalId);
+            }
+            $caja = $this->db->order_by('id', 'DESC')->get('sesiones_caja')->row();
         }
 
         if ($caja && $pagoTransporte > 0 && floatval($registro->pago_transporte) <= 0) {

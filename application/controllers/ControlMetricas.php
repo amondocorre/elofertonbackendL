@@ -289,27 +289,55 @@ class ControlMetricas extends CI_Controller {
 
             // B. VA: Suma de ventas en dinero de la sucursal en el mes (no anuladas)
             $vaQuery = $this->db->query("
-                SELECT COALESCE(SUM(total), 0) as total_ventas, COUNT(idventa) as total_tx
+                SELECT COALESCE(SUM(total), 0) as total_ventas
                 FROM ventas
                 WHERE idneg = ?
                   AND fecha >= ? AND fecha <= ?
-                  AND (estado IS NULL OR UPPER(TRIM(estado)) != 'ANULADO')
+                  AND (estado IS NULL OR UPPER(TRIM(estado)) NOT LIKE '%ANULA%')
+                  AND usuario_anulacion IS NULL
+            ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+
+            // TA: Suma de la cantidad de productos vendidos de la sucursal en el mes (solo activos y no anulados)
+            $taQuery = $this->db->query("
+                SELECT COALESCE(SUM(dv.cuantos), 0) as total_productos
+                FROM ventas v
+                INNER JOIN detalleventas dv ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                LEFT JOIN productos p ON dv.idprod = p.idprod
+                WHERE v.idneg = ?
+                  AND v.fecha >= ? AND v.fecha <= ?
+                  AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
+                  AND v.usuario_anulacion IS NULL
+                  AND (p.estado IS NULL OR UPPER(TRIM(p.estado)) = 'ACTIVO')
             ", [$sucursalId, $fechaInicio, $fechaFin])->row();
 
             $va = floatval($vaQuery->total_ventas ?? 0);
-            $ta = intval($vaQuery->total_tx ?? 0);
+            $ta = floatval(round($taQuery->total_productos ?? 0, 2));
 
             // Si es un vendedor individual (no encargado de sucursal completa), se puede medir sobre sus ventas
             if (($item['tipo_usuario'] ?? '') === 'vendedor') {
                 $vaVendQuery = $this->db->query("
-                    SELECT COALESCE(SUM(total), 0) as total_ventas, COUNT(idventa) as total_tx
+                    SELECT COALESCE(SUM(total), 0) as total_ventas
                     FROM ventas
-                    WHERE vendedor = ?
+                    WHERE (vendedor = ? OR idusr = ?)
                       AND fecha >= ? AND fecha <= ?
-                      AND (estado IS NULL OR UPPER(TRIM(estado)) != 'ANULADO')
-                ", [$vendedorId, $fechaInicio, $fechaFin])->row();
+                      AND (estado IS NULL OR UPPER(TRIM(estado)) NOT LIKE '%ANULA%')
+                      AND usuario_anulacion IS NULL
+                ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+
+                $taVendQuery = $this->db->query("
+                    SELECT COALESCE(SUM(dv.cuantos), 0) as total_productos
+                    FROM ventas v
+                    INNER JOIN detalleventas dv ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                    LEFT JOIN productos p ON dv.idprod = p.idprod
+                    WHERE (v.vendedor = ? OR v.idusr = ?)
+                      AND v.fecha >= ? AND v.fecha <= ?
+                      AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
+                      AND v.usuario_anulacion IS NULL
+                      AND (p.estado IS NULL OR UPPER(TRIM(p.estado)) = 'ACTIVO')
+                ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+
                 $va = floatval($vaVendQuery->total_ventas ?? 0);
-                $ta = intval($vaVendQuery->total_tx ?? 0);
+                $ta = floatval(round($taVendQuery->total_productos ?? 0, 2));
             }
 
             // C. Proyección = (VA / dias_trabajados) * dias_habiles
@@ -325,14 +353,23 @@ class ControlMetricas extends CI_Controller {
             // F. Tendencia TA % = (TA / Ventas Transacciones) * 100 (Redondeado a entero)
             $tendenciaTA = $ventasTxMeta > 0 ? round(($ta / $ventasTxMeta) * 100) : 0;
 
-            // G. Ves Act Mes: Conteo de vendedores distintos que hicieron >= 1 venta en la sucursal en el mes
+            // G. Ves Act Mes: Conteo de vendedores asignados a esta sucursal (vendedores.ciudad) que hayan realizado al menos una venta en el mes
             $vesActQuery = $this->db->query("
-                SELECT COUNT(DISTINCT vendedor) as total_vendedores
-                FROM ventas
-                WHERE idneg = ?
-                  AND fecha >= ? AND fecha <= ?
-                  AND (estado IS NULL OR UPPER(TRIM(estado)) != 'ANULADO')
-                  AND vendedor IS NOT NULL AND vendedor > 0
+                SELECT COUNT(DISTINCT vend.id) as total_vendedores
+                FROM vendedores vend
+                INNER JOIN ventas v ON (
+                    v.vendedor = vend.id 
+                    OR v.idusr = vend.id 
+                    OR EXISTS (
+                        SELECT 1 FROM detalleventas dv 
+                        WHERE dv.idventa = v.idventa AND dv.vendedor = vend.id
+                    )
+                )
+                WHERE vend.ciudad = ?
+                  AND vend.estado = 'activo'
+                  AND v.fecha >= ? AND v.fecha <= ?
+                  AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
+                  AND v.usuario_anulacion IS NULL
             ", [$sucursalId, $fechaInicio, $fechaFin])->row();
             $vesActMes = intval($vesActQuery->total_vendedores ?? 0);
 

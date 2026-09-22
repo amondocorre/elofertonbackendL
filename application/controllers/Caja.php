@@ -76,9 +76,12 @@ class Caja extends CI_Controller {
 
         $cashSales = 0.0;
         foreach ($sales as $s) {
-            // Ignorar ventas cobradas desde la web
+            // Ignorar ventas cobradas exclusivamente desde la web sin efectivo físico en mostrador
             if (!empty($s->comentario) && stripos($s->comentario, '[WEB_PAGADO]') !== false) {
-                continue;
+                $tieneEfectivo = (stripos($s->formapago, 'efectivo') !== false) || (!empty($s->pagomixto) && stripos($s->pagomixto, 'efectivo') !== false);
+                if (!$tieneEfectivo) {
+                    continue;
+                }
             }
 
             $cashPaid = 0.0;
@@ -353,9 +356,12 @@ class Caja extends CI_Controller {
 
             $cashSales = 0.0;
             foreach ($sales as $s) {
-                // Ignorar ventas cobradas desde la web
+                // Ignorar ventas cobradas exclusivamente desde la web sin efectivo físico en mostrador
                 if (!empty($s->comentario) && stripos($s->comentario, '[WEB_PAGADO]') !== false) {
-                    continue;
+                    $tieneEfectivo = (stripos($s->formapago, 'efectivo') !== false) || (!empty($s->pagomixto) && stripos($s->pagomixto, 'efectivo') !== false);
+                    if (!$tieneEfectivo) {
+                        continue;
+                    }
                 }
 
                 // Si la base de datos almacena v.fecha como DATETIME, filtramos por hora exacta.

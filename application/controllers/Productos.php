@@ -63,13 +63,23 @@ class Productos extends MY_Controller {
         $this->db->join('marcas m', 'p.idmarca = m.id', 'left');
 
         if (!empty($search)) {
-            $search_escaped = $this->db->escape_like_str(trim($search));
-            $this->db->group_start();
-            $this->db->like('p.descripcion', $search_escaped);
-            $this->db->or_like('p.idprod', $search_escaped);
-            $this->db->or_like('m.nombre', $search_escaped);
-            $this->db->or_like('c.descripcion', $search_escaped);
-            $this->db->group_end();
+            $words = array_values(array_filter(explode(' ', trim($search)), function($w) {
+                return trim($w) !== '';
+            }));
+
+            if (!empty($words)) {
+                $this->db->group_start();
+                foreach ($words as $word) {
+                    $word_escaped = $this->db->escape_like_str($word);
+                    $this->db->group_start();
+                    $this->db->like('p.descripcion', $word_escaped, 'both', FALSE);
+                    $this->db->or_like('p.idprod', $word_escaped, 'both', FALSE);
+                    $this->db->or_like('m.nombre', $word_escaped, 'both', FALSE);
+                    $this->db->or_like('c.descripcion', $word_escaped, 'both', FALSE);
+                    $this->db->group_end();
+                }
+                $this->db->group_end();
+            }
         }
 
         if (!empty($marca) && $marca !== 'Todas' && $marca !== 'undefined') {

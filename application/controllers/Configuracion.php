@@ -33,6 +33,19 @@ class Configuracion extends CI_Controller {
         if (!$this->db->field_exists('dias_proforma', 'configapp')) {
             $this->db->query("ALTER TABLE configapp ADD COLUMN dias_proforma INT DEFAULT 1");
         }
+        $web_buttons = [
+            'web_btn_inicio',
+            'web_btn_vista_clasica',
+            'web_btn_comisiones',
+            'web_btn_saldos_link',
+            'web_btn_proformas',
+            'web_btn_incentivos'
+        ];
+        foreach ($web_buttons as $btn_col) {
+            if (!$this->db->field_exists($btn_col, 'configapp')) {
+                $this->db->query("ALTER TABLE configapp ADD COLUMN {$btn_col} INT DEFAULT 1");
+            }
+        }
         if (!$this->db->table_exists('metodos_pago_custom')) {
             $this->db->query("CREATE TABLE IF NOT EXISTS `metodos_pago_custom` (
                 `id` INT(11) NOT NULL AUTO_INCREMENT,
@@ -82,6 +95,14 @@ class Configuracion extends CI_Controller {
         foreach ($pos_fields as $field) {
             if (isset($input_data[$field])) {
                 $data[$field] = (int)$input_data[$field];
+            }
+        }
+
+        // Web navigation buttons
+        $web_btn_fields = ['web_btn_inicio', 'web_btn_vista_clasica', 'web_btn_comisiones', 'web_btn_saldos_link', 'web_btn_proformas', 'web_btn_incentivos'];
+        foreach ($web_btn_fields as $btn_field) {
+            if (isset($input_data[$btn_field])) {
+                $data[$btn_field] = (int)$input_data[$btn_field];
             }
         }
         
