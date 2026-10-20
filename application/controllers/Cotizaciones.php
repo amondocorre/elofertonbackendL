@@ -135,6 +135,29 @@ class Cotizaciones extends MY_Controller {
         $this->db->order_by('dc.id', 'ASC');
         $detalles = $this->db->get()->result();
 
+        // Convertir imágenes a Base64 directamente en el servidor para evitar bloqueos de red o CORS en el PDF
+        $uploadsDirProd = FCPATH . 'uploads/productos/';
+        $uploadsDirCotiz = FCPATH . 'uploads/cotizaciones/';
+
+        foreach ($detalles as &$d) {
+            $d->imagen_base64 = null;
+            $imgName = !empty($d->imagen) ? basename(trim($d->imagen)) : '';
+            if (!empty($imgName)) {
+                $targetPath = null;
+                if (file_exists($uploadsDirProd . $imgName) && is_file($uploadsDirProd . $imgName)) {
+                    $targetPath = $uploadsDirProd . $imgName;
+                } elseif (file_exists($uploadsDirCotiz . $imgName) && is_file($uploadsDirCotiz . $imgName)) {
+                    $targetPath = $uploadsDirCotiz . $imgName;
+                }
+
+                if ($targetPath && file_exists($targetPath)) {
+                    $ext = strtolower(pathinfo($targetPath, PATHINFO_EXTENSION));
+                    $mime = ($ext === 'jpg' || $ext === 'jpeg') ? 'image/jpeg' : (($ext === 'webp') ? 'image/webp' : 'image/png');
+                    $d->imagen_base64 = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($targetPath));
+                }
+            }
+        }
+
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode([
@@ -410,5 +433,58 @@ class Cotizaciones extends MY_Controller {
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode(['status' => 'success', 'message' => "Estado actualizado a $nuevo_estado"]));
+    }
+
+    /**
+     * Devuelve una imagen en formato Base64 para garantizar su inclusión en documentos PDF sin problemas de CORS.
+     * GET /cotizaciones/obtener_imagen_base64?img=nombre.png&idprod=CODIGO
+     */
+    public function obtener_imagen_base64() {
+        $img = trim($this->input->get('img') ?? '');
+        $idprod = trim($this->input->get('idprod') ?? '');
+
+        $uploadsDirProd = FCPATH . 'uploads/productos/';
+        $uploadsDirCotiz = FCPATH . 'uploads/cotizaciones/';
+        $targetPath = null;
+
+        if (!empty($img)) {
+            $cleanImg = basename($img);
+            if (file_exists($uploadsDirProd . $cleanImg) && is_file($uploadsDirProd . $cleanImg)) {
+                $targetPath = $uploadsDirProd . $cleanImg;
+            } elseif (file_exists($uploadsDirCotiz . $cleanImg) && is_file($uploadsDirCotiz . $cleanImg)) {
+                $targetPath = $uploadsDirCotiz . $cleanImg;
+            }
+        }
+
+        // Si no se encontró por nombre de archivo y viene idprod, buscar en tabla productos
+        if (!$targetPath && !empty($idprod)) {
+            $prod = $this->db->select('imagen')->get_where('productos', ['idprod' => $idprod])->row();
+            if ($prod && !empty($prod->imagen)) {
+                $cleanImg = basename(trim($prod->imagen));
+                if (file_exists($uploadsDirProd . $cleanImg) && is_file($uploadsDirProd . $cleanImg)) {
+                    $targetPath = $uploadsDirProd . $cleanImg;
+                }
+            }
+        }
+
+        if ($targetPath && file_exists($targetPath)) {
+            $ext = strtolower(pathinfo($targetPath, PATHINFO_EXTENSION));
+            $mime = ($ext === 'jpg' || $ext === 'jpeg') ? 'image/jpeg' : (($ext === 'webp') ? 'image/webp' : 'image/png');
+            $base64 = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($targetPath));
+
+            return $this->output
+                ->set_content_type('application/json')
+                ->set_output(json_encode([
+                    'status' => 'success',
+                    'base64' => $base64
+                ]));
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode([
+                'status' => 'error',
+                'message' => 'Imagen no encontrada'
+            ]));
     }
 }
