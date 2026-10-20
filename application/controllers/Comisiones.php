@@ -25,6 +25,24 @@ class Comisiones extends MY_Controller {
     public function listar_comisiones() {
         $this->check_permission('Comisiones', 'ver');
         $estado = $this->input->get('estado') ?: 'pendientes';
+
+        // Obtener los IDs de detalleventas que están actualmente congelados en un lote Pendiente_Confirmar
+        // Se ejecuta PRIMERO con una consulta SQL directa para no contaminar el Query Builder principal
+        $lotes_pendientes = $this->db->query("SELECT vendedor_id, detalle_ids, fecha_generacion FROM historial_pagos_comisiones WHERE estado = 'Pendiente_Confirmar'")->result();
+
+        $ids_bloqueados = [];
+        foreach ($lotes_pendientes as $lp) {
+            if (!empty($lp->detalle_ids)) {
+                $parts = explode(',', $lp->detalle_ids);
+                foreach ($parts as $p) {
+                    $p_int = intval(trim($p));
+                    if ($p_int > 0) {
+                        $ids_bloqueados[] = $p_int;
+                    }
+                }
+            }
+        }
+        $ids_bloqueados = array_values(array_unique($ids_bloqueados));
         
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v_sale.vendedor USING utf8mb4), '0'), CONVERT(v_sale.idusr USING utf8mb4))";
 
@@ -43,6 +61,9 @@ class Comisiones extends MY_Controller {
         $this->db->where('(v.recibe_comision IS NULL OR v.recibe_comision = 1)');
         // Filtrar únicamente a los usuarios que tengan el rol de Vendedor / Vendedores
         $this->db->where("(TRIM(LOWER(v.rol)) IN ('vendedores', 'vendedor') OR v.id IN (SELECT vendedor_id FROM vendedores_roles WHERE TRIM(LOWER(rol)) IN ('vendedores', 'vendedor')))", NULL, FALSE);
+
+        // Join to historial_pagos_comisiones to handle confirmacion_pendiente isolation
+        $this->db->join("historial_pagos_comisiones hpc", "hpc.vendedor_id = " . $vendedor_expr . " AND hpc.estado = 'Pendiente_Confirmar'", "left", FALSE);
 
         $vendedor_id = $this->input->get('vendedor_id');
         if (!empty($vendedor_id)) {
@@ -64,12 +85,21 @@ class Comisiones extends MY_Controller {
 
         if ($estado === 'pendientes') {
             $this->db->where('dv.pagocomision IS NULL');
-            // Excluir vendedores que ya están en un lote pendiente de confirmación en el historial
-            $this->db->where($vendedor_expr . " NOT IN (SELECT vendedor_id FROM historial_pagos_comisiones WHERE estado = 'Pendiente_Confirmar')", NULL, FALSE);
+            // Excluir los ítems que ya están en un lote pendiente de confirmación
+            if (!empty($ids_bloqueados)) {
+                $this->db->where_not_in('dv.id', $ids_bloqueados);
+            } else {
+                $this->db->where('hpc.id IS NULL');
+            }
         } elseif ($estado === 'confirmacion_pendiente') {
             $this->db->where('dv.pagocomision IS NULL');
-            // Únicamente los vendedores que tienen un lote masivo pendiente de confirmación
-            $this->db->where($vendedor_expr . " IN (SELECT vendedor_id FROM historial_pagos_comisiones WHERE estado = 'Pendiente_Confirmar')", NULL, FALSE);
+            // Únicamente los ítems congelados en el lote masivo pendiente de confirmación
+            if (!empty($ids_bloqueados)) {
+                $this->db->where_in('dv.id', $ids_bloqueados);
+            } else {
+                $this->db->where('hpc.id IS NOT NULL');
+                $this->db->where('v_sale.fecha <= hpc.fecha_generacion');
+            }
         } else {
             $this->db->where('dv.pagocomision IS NOT NULL');
         }
@@ -98,6 +128,17 @@ class Comisiones extends MY_Controller {
             return $this->output->set_status_header(400)->set_output(json_encode(['error' => 'Falta el ID del vendedor']));
         }
 
+        // Consultar si hay lote en Pendiente_Confirmar para este vendedor
+        $lote_vend = $this->db->get_where('historial_pagos_comisiones', [
+            'vendedor_id' => intval($vendedor_id),
+            'estado'      => 'Pendiente_Confirmar'
+        ])->row();
+
+        $ids_lote = [];
+        if ($lote_vend && !empty($lote_vend->detalle_ids)) {
+            $ids_lote = array_filter(array_map('intval', explode(',', $lote_vend->detalle_ids)));
+        }
+
         $vendedor_expr = "COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4))";
 
         $this->db->select("dv.id as id_detalle, dv.idprod, COALESCE(dv.descripcion, i.descripcion) as descripcion, dv.precioventa, dv.cuantos, (CASE WHEN dv.cuantos > 0 THEN (dv.comision / dv.cuantos) ELSE dv.comision END) as comision, dv.comision as subtotal_comision, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') as fecha_venta, v.id as id_venta, v.idventa as pedido_id, prof.id as proforma_id, COALESCE(prof.id, v.id) as pedido_num_id, d.nombre as sucursal_nombre, DATE_FORMAT(dv.pagocomision, '%d/%m/%Y %H:%i') as fecha_pago, vend.nombre as vendedor_nombre, vend.telefono as vendedor_telefono, v.cliente, v.telefono as cliente_telefono", FALSE);
@@ -112,8 +153,18 @@ class Comisiones extends MY_Controller {
         // Excluir ventas anuladas
         $this->db->where('(v.estado IS NULL OR UPPER(TRIM(v.estado)) != "ANULADO")');
 
-        if ($estado === 'pendientes' || $estado === 'confirmacion_pendiente') {
+        if ($estado === 'confirmacion_pendiente') {
             $this->db->where('dv.pagocomision IS NULL');
+            if (!empty($ids_lote)) {
+                $this->db->where_in('dv.id', $ids_lote);
+            } elseif ($lote_vend && !empty($lote_vend->fecha_generacion)) {
+                $this->db->where('v.fecha <=', $lote_vend->fecha_generacion);
+            }
+        } elseif ($estado === 'pendientes') {
+            $this->db->where('dv.pagocomision IS NULL');
+            if (!empty($ids_lote)) {
+                $this->db->where_not_in('dv.id', $ids_lote);
+            }
         } else {
             $this->db->where('dv.pagocomision IS NOT NULL');
         }
@@ -185,16 +236,48 @@ class Comisiones extends MY_Controller {
 
         $fecha_generacion = date('Y-m-d H:i:s');
         $historial_rows = [];
+        $items_monto_map = [];
 
         foreach ($vendedores as $v) {
+            $v_id = intval($v['vendedor_id']);
+
+            // Obtener los IDs exactos de detalleventas pendientes para este vendedor en este momento
+            $sql_ids = "SELECT dv.id, dv.comision 
+                        FROM detalleventas dv
+                        INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                        WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?
+                          AND dv.comision > 0
+                          AND dv.pagocomision IS NULL
+                          AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
+                        ORDER BY dv.id ASC";
+            $items_query = $this->db->query($sql_ids, [(string)$v_id])->result();
+
+            $detalle_ids_arr = [];
+            $total_calculado = 0;
+            foreach ($items_query as $it) {
+                $detalle_ids_arr[] = intval($it->id);
+                $total_calculado += floatval($it->comision);
+            }
+
+            // Usar el monto calculado real de los ítems existentes
+            $monto_lote = !empty($detalle_ids_arr) ? $total_calculado : floatval($v['monto']);
+            $detalle_ids_str = implode(',', $detalle_ids_arr);
+            $items_monto_map[$v_id] = $monto_lote;
+
+            // Eliminar cualquier registro previo en Pendiente_Confirmar para este vendedor antes de registrar el nuevo
+            $this->db->where('vendedor_id', $v_id);
+            $this->db->where('estado', 'Pendiente_Confirmar');
+            $this->db->delete('historial_pagos_comisiones');
+
             $historial_rows[] = [
-                'vendedor_id'      => intval($v['vendedor_id']),
-                'monto'            => floatval($v['monto']),
+                'vendedor_id'      => $v_id,
+                'monto'            => $monto_lote,
                 'nro_cuenta'       => $v['nro_cuenta'] ?? null,
                 'banco'            => $v['banco'] ?? null,
                 'estado'           => 'Pendiente_Confirmar',
                 'usuario_genero'   => $usuario_id,
-                'fecha_generacion' => $fecha_generacion
+                'fecha_generacion' => $fecha_generacion,
+                'detalle_ids'      => $detalle_ids_str
             ];
         }
 
@@ -259,7 +342,7 @@ class Comisiones extends MY_Controller {
                 'cuenta_bmsc'         => $cuenta_bmsc,
                 'fecha_pago'          => date('d/m/Y', strtotime($fecha_generacion)),
                 'tipo_pago'           => $tipo_pago,
-                'importe'             => number_format(floatval($v['monto']), 2, '.', ''),
+                'importe'             => number_format(floatval($items_monto_map[$v_id] ?? $v['monto']), 2, '.', ''),
                 'codigo_otro_banco'   => $codigo_otro_banco,
                 'cuenta_otro_banco'   => $cuenta_otro_banco,
                 'detalle'             => 'pago comision'
@@ -302,13 +385,11 @@ class Comisiones extends MY_Controller {
         foreach ($confirmados as $c) {
             $vend_id = intval($c['vendedor_id']);
             
-            // 1. Obtener la fecha de corte registrada al generar el archivo Excel
+            // 1. Obtener el lote registrado al generar el archivo Excel
             $lote = $this->db->get_where('historial_pagos_comisiones', [
                 'vendedor_id' => $vend_id,
                 'estado'      => 'Pendiente_Confirmar'
             ])->row();
-
-            $fecha_corte = $lote ? $lote->fecha_generacion : $hoy;
 
             // 2. Actualizar el registro del historial a 'Confirmado'
             $this->db->where('vendedor_id', $vend_id);
@@ -319,16 +400,27 @@ class Comisiones extends MY_Controller {
                 'fecha_confirmacion' => $hoy
             ]);
 
-            // 3. Marcar como pagados SOLO los productos vendidos HASTA la fecha de corte (generación del Excel)
-            $sql_update = "UPDATE detalleventas dv
-                           INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
-                           SET dv.pagocomision = ?
-                           WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?
-                             AND dv.comision > 0
-                             AND dv.pagocomision IS NULL
-                             AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
-                             AND v.fecha <= ?";
-            $this->db->query($sql_update, [$hoy, (string)$vend_id, $fecha_corte]);
+            // 3. Marcar como pagados ÚNICAMENTE los productos que pertenecían al lote generado
+            if ($lote && !empty($lote->detalle_ids)) {
+                $ids = array_filter(array_map('intval', explode(',', $lote->detalle_ids)));
+                if (!empty($ids)) {
+                    $this->db->where_in('id', $ids);
+                    $this->db->where('pagocomision IS NULL');
+                    $this->db->update('detalleventas', ['pagocomision' => $hoy]);
+                }
+            } else {
+                // Fallback de retrocompatibilidad por fecha de corte
+                $fecha_corte = $lote ? $lote->fecha_generacion : $hoy;
+                $sql_update = "UPDATE detalleventas dv
+                               INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                               SET dv.pagocomision = ?
+                               WHERE COALESCE(NULLIF(CONVERT(dv.vendedor USING utf8mb4), '0'), NULLIF(CONVERT(v.vendedor USING utf8mb4), '0'), CONVERT(v.idusr USING utf8mb4)) = ?
+                                 AND dv.comision > 0
+                                 AND dv.pagocomision IS NULL
+                                 AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
+                                 AND v.fecha <= ?";
+                $this->db->query($sql_update, [$hoy, (string)$vend_id, $fecha_corte]);
+            }
         }
 
         // Procesar rechazados (se eliminan del historial de pagos masivos para volver a listarse en pendientes)
@@ -432,7 +524,13 @@ class Comisiones extends MY_Controller {
             $pago = $this->db->get_where('historial_pagos_comisiones', ['id' => $historial_id])->row();
             if ($pago) {
                 // Volver a NULL los productos que se pagaron en esa confirmación
-                if ($pago->fecha_confirmacion) {
+                if (!empty($pago->detalle_ids)) {
+                    $ids = array_filter(array_map('intval', explode(',', $pago->detalle_ids)));
+                    if (!empty($ids)) {
+                        $this->db->where_in('id', $ids);
+                        $this->db->update('detalleventas', ['pagocomision' => null]);
+                    }
+                } elseif ($pago->fecha_confirmacion) {
                     $this->db->query("UPDATE detalleventas dv
                                       INNER JOIN ventas v ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
                                       SET dv.pagocomision = NULL

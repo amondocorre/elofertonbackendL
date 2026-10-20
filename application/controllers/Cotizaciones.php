@@ -29,7 +29,8 @@ class Cotizaciones extends MY_Controller {
         $fin = $this->input->get('fin');
         $q = trim($this->input->get('q') ?? '');
         $estado = $this->input->get('estado');
-        $sucursal = $this->input->get('sucursal') ?: $this->input->get_request_header('X-Active-Branch', TRUE);
+        $sucursalParam = $this->input->get('sucursal');
+        $sucursal = ($sucursalParam !== null) ? $sucursalParam : $this->input->get_request_header('X-Active-Branch', TRUE);
 
         $this->db->select("c.*, DATE_FORMAT(c.fecha, '%d/%m/%Y %H:%i') as fecha_formateada, DATE_FORMAT(c.fecha, '%Y-%m-%d') as fecha_simple, d.nombre as sucursal_nombre, COALESCE(v.nombre, c.vendedor, 'Usuario') as usuario_nombre, (SELECT COUNT(dc.id) FROM detallecotizaciones dc WHERE dc.idcotizacion = c.idcotizacion) as cantidad_items", FALSE);
         $this->db->from('cotizaciones c');
@@ -127,8 +128,9 @@ class Cotizaciones extends MY_Controller {
         }
 
         // Obtener detalles de la cotización
-        $this->db->select('dc.*, dc.cantidad as cuantos, dc.precioventa as precio, dc.idprod as codigo_producto');
+        $this->db->select('dc.*, dc.cantidad as cuantos, dc.precioventa as precio, dc.idprod as codigo_producto, COALESCE(dc.imagen, p.imagen) as imagen');
         $this->db->from('detallecotizaciones dc');
+        $this->db->join('productos p', 'dc.idprod = p.idprod', 'left');
         $this->db->where('dc.idcotizacion', $cotizacion->idcotizacion);
         $this->db->order_by('dc.id', 'ASC');
         $detalles = $this->db->get()->result();

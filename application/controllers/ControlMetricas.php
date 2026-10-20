@@ -252,6 +252,8 @@ class ControlMetricas extends CI_Controller {
         $fechaInicio = sprintf('%04d-%02d-01 00:00:00', $anio, $mes);
         $totalDiasMes = intval(date('t', strtotime(sprintf('%04d-%02d-01', $anio, $mes))));
         $fechaFin = sprintf('%04d-%02d-%02d 23:59:59', $anio, $mes, $totalDiasMes);
+        
+        $isHistorical = ($anio == 2026 && $mes <= 7);
 
         // 4. Calcular métricas dinámicas para cada usuario/sucursal
         $filas = [];
@@ -288,53 +290,89 @@ class ControlMetricas extends CI_Controller {
             $ventasMesMeta = intval($meta['ventas_mes_meta'] ?? 0);
 
             // B. VA: Suma de ventas en dinero de la sucursal en el mes (no anuladas)
-            $vaQuery = $this->db->query("
-                SELECT COALESCE(SUM(total), 0) as total_ventas
-                FROM ventas
-                WHERE idneg = ?
-                  AND fecha >= ? AND fecha <= ?
-                  AND (estado IS NULL OR UPPER(TRIM(estado)) NOT LIKE '%ANULA%')
-                  AND usuario_anulacion IS NULL
-            ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+            if ($isHistorical) {
+                $vaQuery = $this->db->query("
+                    SELECT COALESCE(SUM(total), 0) as total_ventas
+                    FROM ventas_historico_2026 v
+                    JOIN depositos d ON d.nombre = v.deposito
+                    WHERE d.id = ?
+                      AND v.fechaventa >= ? AND v.fechaventa <= ?
+                ", [$sucursalId, $fechaInicio, $fechaFin])->row();
 
-            // TA: Suma de la cantidad de productos vendidos de la sucursal en el mes (solo activos y no anulados)
-            $taQuery = $this->db->query("
-                SELECT COALESCE(SUM(dv.cuantos), 0) as total_productos
-                FROM ventas v
-                INNER JOIN detalleventas dv ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
-                LEFT JOIN productos p ON dv.idprod = p.idprod
-                WHERE v.idneg = ?
-                  AND v.fecha >= ? AND v.fecha <= ?
-                  AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
-                  AND v.usuario_anulacion IS NULL
-                  AND (p.estado IS NULL OR UPPER(TRIM(p.estado)) = 'ACTIVO')
-            ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+                $taQuery = $this->db->query("
+                    SELECT COALESCE(SUM(cantidad), 0) as total_productos
+                    FROM ventas_historico_2026 v
+                    JOIN depositos d ON d.nombre = v.deposito
+                    WHERE d.id = ?
+                      AND v.fechaventa >= ? AND v.fechaventa <= ?
+                ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+            } else {
+                $vaQuery = $this->db->query("
+                    SELECT COALESCE(SUM(total), 0) as total_ventas
+                    FROM ventas
+                    WHERE idneg = ?
+                      AND fecha >= ? AND fecha <= ?
+                      AND (estado IS NULL OR UPPER(TRIM(estado)) NOT LIKE '%ANULA%')
+                      AND usuario_anulacion IS NULL
+                ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+
+                // TA: Suma de la cantidad de productos vendidos de la sucursal en el mes (solo activos y no anulados)
+                $taQuery = $this->db->query("
+                    SELECT COALESCE(SUM(dv.cuantos), 0) as total_productos
+                    FROM ventas v
+                    INNER JOIN detalleventas dv ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                    LEFT JOIN productos p ON dv.idprod = p.idprod
+                    WHERE v.idneg = ?
+                      AND v.fecha >= ? AND v.fecha <= ?
+                      AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
+                      AND v.usuario_anulacion IS NULL
+                      AND (p.estado IS NULL OR UPPER(TRIM(p.estado)) = 'ACTIVO')
+                ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+            }
 
             $va = floatval($vaQuery->total_ventas ?? 0);
             $ta = floatval(round($taQuery->total_productos ?? 0, 2));
 
             // Si es un vendedor individual (no encargado de sucursal completa), se puede medir sobre sus ventas
             if (($item['tipo_usuario'] ?? '') === 'vendedor') {
-                $vaVendQuery = $this->db->query("
-                    SELECT COALESCE(SUM(total), 0) as total_ventas
-                    FROM ventas
-                    WHERE (vendedor = ? OR idusr = ?)
-                      AND fecha >= ? AND fecha <= ?
-                      AND (estado IS NULL OR UPPER(TRIM(estado)) NOT LIKE '%ANULA%')
-                      AND usuario_anulacion IS NULL
-                ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+                if ($isHistorical) {
+                    $vaVendQuery = $this->db->query("
+                        SELECT COALESCE(SUM(total), 0) as total_ventas
+                        FROM ventas_historico_2026 v
+                        JOIN vendedores u ON u.nombre = v.vendedor
+                        WHERE u.id = ?
+                          AND v.fechaventa >= ? AND v.fechaventa <= ?
+                    ", [$vendedorId, $fechaInicio, $fechaFin])->row();
 
-                $taVendQuery = $this->db->query("
-                    SELECT COALESCE(SUM(dv.cuantos), 0) as total_productos
-                    FROM ventas v
-                    INNER JOIN detalleventas dv ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
-                    LEFT JOIN productos p ON dv.idprod = p.idprod
-                    WHERE (v.vendedor = ? OR v.idusr = ?)
-                      AND v.fecha >= ? AND v.fecha <= ?
-                      AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
-                      AND v.usuario_anulacion IS NULL
-                      AND (p.estado IS NULL OR UPPER(TRIM(p.estado)) = 'ACTIVO')
-                ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+                    $taVendQuery = $this->db->query("
+                        SELECT COALESCE(SUM(cantidad), 0) as total_productos
+                        FROM ventas_historico_2026 v
+                        JOIN vendedores u ON u.nombre = v.vendedor
+                        WHERE u.id = ?
+                          AND v.fechaventa >= ? AND v.fechaventa <= ?
+                    ", [$vendedorId, $fechaInicio, $fechaFin])->row();
+                } else {
+                    $vaVendQuery = $this->db->query("
+                        SELECT COALESCE(SUM(total), 0) as total_ventas
+                        FROM ventas
+                        WHERE (vendedor = ? OR idusr = ?)
+                          AND fecha >= ? AND fecha <= ?
+                          AND (estado IS NULL OR UPPER(TRIM(estado)) NOT LIKE '%ANULA%')
+                          AND usuario_anulacion IS NULL
+                    ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+
+                    $taVendQuery = $this->db->query("
+                        SELECT COALESCE(SUM(dv.cuantos), 0) as total_productos
+                        FROM ventas v
+                        INNER JOIN detalleventas dv ON CONVERT(dv.idventa USING utf8mb4) = CONVERT(v.idventa USING utf8mb4)
+                        LEFT JOIN productos p ON dv.idprod = p.idprod
+                        WHERE (v.vendedor = ? OR v.idusr = ?)
+                          AND v.fecha >= ? AND v.fecha <= ?
+                          AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
+                          AND v.usuario_anulacion IS NULL
+                          AND (p.estado IS NULL OR UPPER(TRIM(p.estado)) = 'ACTIVO')
+                    ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+                }
 
                 $va = floatval($vaVendQuery->total_ventas ?? 0);
                 $ta = floatval(round($taVendQuery->total_productos ?? 0, 2));
@@ -354,23 +392,34 @@ class ControlMetricas extends CI_Controller {
             $tendenciaTA = $ventasTxMeta > 0 ? round(($ta / $ventasTxMeta) * 100) : 0;
 
             // G. Ves Act Mes: Conteo de vendedores asignados a esta sucursal (vendedores.ciudad) que hayan realizado al menos una venta en el mes
-            $vesActQuery = $this->db->query("
-                SELECT COUNT(DISTINCT vend.id) as total_vendedores
-                FROM vendedores vend
-                INNER JOIN ventas v ON (
-                    v.vendedor = vend.id 
-                    OR v.idusr = vend.id 
-                    OR EXISTS (
-                        SELECT 1 FROM detalleventas dv 
-                        WHERE dv.idventa = v.idventa AND dv.vendedor = vend.id
+            if ($isHistorical) {
+                $vesActQuery = $this->db->query("
+                    SELECT COUNT(DISTINCT vend.id) as total_vendedores
+                    FROM vendedores vend
+                    INNER JOIN ventas_historico_2026 v ON vend.nombre = v.vendedor
+                    WHERE vend.ciudad = ?
+                      AND vend.estado = 'activo'
+                      AND v.fechaventa >= ? AND v.fechaventa <= ?
+                ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+            } else {
+                $vesActQuery = $this->db->query("
+                    SELECT COUNT(DISTINCT vend.id) as total_vendedores
+                    FROM vendedores vend
+                    INNER JOIN ventas v ON (
+                        v.vendedor = vend.id 
+                        OR v.idusr = vend.id 
+                        OR EXISTS (
+                            SELECT 1 FROM detalleventas dv 
+                            WHERE dv.idventa = v.idventa AND dv.vendedor = vend.id
+                        )
                     )
-                )
-                WHERE vend.ciudad = ?
-                  AND vend.estado = 'activo'
-                  AND v.fecha >= ? AND v.fecha <= ?
-                  AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
-                  AND v.usuario_anulacion IS NULL
-            ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+                    WHERE vend.ciudad = ?
+                      AND vend.estado = 'activo'
+                      AND v.fecha >= ? AND v.fecha <= ?
+                      AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) NOT LIKE '%ANULA%')
+                      AND v.usuario_anulacion IS NULL
+                ", [$sucursalId, $fechaInicio, $fechaFin])->row();
+            }
             $vesActMes = intval($vesActQuery->total_vendedores ?? 0);
 
             // Tendencia Ves Act % = (Ves Act Mes / Vend Obj) * 100 (Redondeado a entero)
@@ -386,13 +435,23 @@ class ControlMetricas extends CI_Controller {
             $vendedoresNuevos = intval($nuevosQuery->total_nuevos ?? 0);
 
             // I. Ventas Encargadas: Ventas realizadas directamente por el usuario (vendedor = $vendedorId)
-            $ventasEncQuery = $this->db->query("
-                SELECT COUNT(idventa) as total_ventas_encargado
-                FROM ventas
-                WHERE (vendedor = ? OR idusr = ?)
-                  AND fecha >= ? AND fecha <= ?
-                  AND (estado IS NULL OR UPPER(TRIM(estado)) != 'ANULADO')
-            ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+            if ($isHistorical) {
+                $ventasEncQuery = $this->db->query("
+                    SELECT COUNT(DISTINCT v.id_venta) as total_ventas_encargado
+                    FROM ventas_historico_2026 v
+                    JOIN vendedores u ON u.nombre = v.vendedor
+                    WHERE u.id = ?
+                      AND v.fechaventa >= ? AND v.fechaventa <= ?
+                ", [$vendedorId, $fechaInicio, $fechaFin])->row();
+            } else {
+                $ventasEncQuery = $this->db->query("
+                    SELECT COUNT(idventa) as total_ventas_encargado
+                    FROM ventas
+                    WHERE (vendedor = ? OR idusr = ?)
+                      AND fecha >= ? AND fecha <= ?
+                      AND (estado IS NULL OR UPPER(TRIM(estado)) != 'ANULADO')
+                ", [$vendedorId, $vendedorId, $fechaInicio, $fechaFin])->row();
+            }
             $ventasEncargadas = intval($ventasEncQuery->total_ventas_encargado ?? 0);
 
             // Tendencia Ventas Encargada % = (Ventas Encargadas / Ventas Mes) * 100 (Redondeado a entero)

@@ -127,9 +127,42 @@ class Auth extends MY_Controller {
      * Endpoint para consultar permisos y estructura de menús en caliente
      */
     public function get_permissions() {
-        $userId = $this->input->get_post('userId');
-        $rolId = $this->input->get_post('rolId');
-        $sistema = $this->input->get_post('sistema') ?? 'SISVEN';
+        $jsonInput = json_decode(file_get_contents('php://input'), true) ?: [];
+
+        $userId = $this->input->get_post('userId')
+            ?: ($jsonInput['userId'] ?? null)
+            ?: $this->input->get_request_header('X-User-Id', true)
+            ?: (isset($_SERVER['HTTP_X_USER_ID']) ? $_SERVER['HTTP_X_USER_ID'] : null);
+
+        $rolId = $this->input->get_post('rolId')
+            ?: ($jsonInput['rolId'] ?? null)
+            ?: $this->input->get_request_header('X-Rol-Id', true)
+            ?: (isset($_SERVER['HTTP_X_ROL_ID']) ? $_SERVER['HTTP_X_ROL_ID'] : null);
+
+        $sistema = $this->input->get_post('sistema')
+            ?: ($jsonInput['sistema'] ?? null)
+            ?: 'SISVEN';
+
+        // Sanitizar parámetros para evitar cadenas literales como 'undefined' o 'null'
+        if ($rolId === 'undefined' || $rolId === 'null' || !is_numeric($rolId) || intval($rolId) <= 0) {
+            $rolId = null;
+        }
+        if ($userId === 'undefined' || $userId === 'null' || !is_numeric($userId) || intval($userId) <= 0) {
+            $userId = null;
+        }
+
+        // Si se recibió el usuario pero no el rol, obtener el rol asignado en base de datos
+        if (!empty($userId) && empty($rolId)) {
+            $userRow = $this->db->get_where('vendedores', ['id' => intval($userId)])->row();
+            if ($userRow) {
+                $rolId = $userRow->id_rol;
+                if (empty($rolId)) {
+                    $roleName = $userRow->rol ?? '';
+                    $rolObj = $this->db->get_where('roles', ['nombre_rol' => $roleName])->row();
+                    $rolId = $rolObj ? $rolObj->id : (stripos($roleName, 'admin') !== false ? 1 : 2);
+                }
+            }
+        }
 
         if (empty($userId) || empty($rolId)) {
             return $this->output
@@ -149,6 +182,7 @@ class Auth extends MY_Controller {
         return $this->output
             ->set_content_type('application/json')
             ->set_output(json_encode([
+                'rolId' => intval($rolId),
                 'permissions' => $permissions,
                 'menu' => $menuTree,
                 'branches' => $branches

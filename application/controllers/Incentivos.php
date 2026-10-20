@@ -55,6 +55,46 @@ class Incentivos extends MY_Controller {
     }
 
     /**
+     * Obtiene el listado de ventas individuales y productos calificados de un vendedor en un período.
+     * GET /incentivos/detalle_ventas?vendedor_id=X&periodo=YYYY-MM
+     */
+    public function detalle_ventas() {
+        $this->check_permission('Incentivos', 'ver');
+
+        $vendedor_id = $this->input->get('vendedor_id');
+        $periodo = $this->input->get('periodo') ?: date('Y-m');
+
+        if (!$vendedor_id) {
+            return $this->output
+                ->set_status_header(400)
+                ->set_content_type('application/json')
+                ->set_output(json_encode(['error' => 'Falta el ID del vendedor.']));
+        }
+
+        $vendedor = $this->db->select('id, nombre, carnet, rol, telefono, ciudad')->get_where('vendedores', ['id' => intval($vendedor_id)])->row();
+        $detalleVentas = $this->Incentivo_model->obtener_detalle_ventas_calificadas($vendedor_id, $periodo);
+
+        $totalUnidades = 0;
+        $totalComisiones = 0;
+        foreach ($detalleVentas as $item) {
+            $totalUnidades += intval($item->cantidad);
+            $totalComisiones += floatval($item->comision_total);
+        }
+
+        return $this->output
+            ->set_content_type('application/json')
+            ->set_output(json_encode([
+                'status'           => 'success',
+                'vendedor'         => $vendedor,
+                'periodo'          => $periodo,
+                'total_registros'  => count($detalleVentas),
+                'total_unidades'   => $totalUnidades,
+                'total_comisiones' => $totalComisiones,
+                'detalle_ventas'   => $detalleVentas
+            ]));
+    }
+
+    /**
      * Obtiene el consolidado mensual de todos los vendedores para el Administrador.
      * GET /incentivos/consolidado?periodo=YYYY-MM&estado=TODOS&cumple_sucursales=TODOS
      */
