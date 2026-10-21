@@ -42,11 +42,14 @@ class Incentivos extends MY_Controller {
         $progreso = $this->Incentivo_model->calcular_progreso_vendedor($vendedor_id, $periodo);
         $detalleVentas = $this->Incentivo_model->obtener_detalle_ventas_calificadas($vendedor_id, $periodo);
 
+        $escalas = $this->Incentivo_model->obtener_escalas();
+
         $response = [
             'status'         => 'success',
             'periodo'        => $periodo,
             'progreso'       => $progreso,
-            'detalle_ventas' => $detalleVentas
+            'detalle_ventas' => $detalleVentas,
+            'escalas'        => $escalas
         ];
 
         return $this->output
