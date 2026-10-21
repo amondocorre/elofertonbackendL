@@ -80,11 +80,12 @@ class Incentivo_model extends CI_Model {
             FROM ventas v
             JOIN detalleventas dv ON v.idventa = dv.idventa
             LEFT JOIN depositos d ON v.idneg = d.id
+            LEFT JOIN productos p ON dv.idprod = p.idprod
             WHERE (COALESCE(NULLIF(CAST(dv.vendedor AS SIGNED), 0), NULLIF(CAST(v.vendedor AS SIGNED), 0), CAST(v.idusr AS SIGNED)) = ?)
               AND v.fecha >= ? AND v.fecha <= ?
               AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
               AND dv.cuantos > 0
-              AND (dv.comision / dv.cuantos) >= 40.00
+              AND p.comision >= 40.00
             GROUP BY v.idneg
             ORDER BY unidades_sucursal DESC
         ";
@@ -195,11 +196,13 @@ class Incentivo_model extends CI_Model {
             SELECT 
                 dv.id as id_detalle,
                 dv.idprod,
-                COALESCE(dv.descripcion, i.descripcion, 'Producto sin descripción') as descripcion,
+                COALESCE(dv.descripcion, p.descripcion, 'Producto sin descripción') as descripcion,
                 dv.cuantos as cantidad,
+                p.precioventa as precio_real,
                 dv.precioventa,
-                (CASE WHEN dv.cuantos > 0 THEN (dv.comision / dv.cuantos) ELSE dv.comision END) as comision_unitaria,
-                dv.comision as comision_total,
+                p.comision as comision_unitaria,
+                COALESCE(dv.comision, 0) as comision_ganada,
+                (p.comision * dv.cuantos) as comision_total,
                 DATE_FORMAT(v.fecha, '%d/%m/%Y %H:%i') as fecha_venta,
                 v.idventa as nro_documento,
                 v.id as id_venta,
@@ -208,12 +211,12 @@ class Incentivo_model extends CI_Model {
             FROM ventas v
             JOIN detalleventas dv ON v.idventa = dv.idventa
             LEFT JOIN depositos d ON v.idneg = d.id
-            LEFT JOIN inventarios i ON dv.idprod = i.id
+            LEFT JOIN productos p ON dv.idprod = p.idprod
             WHERE (COALESCE(NULLIF(CAST(dv.vendedor AS SIGNED), 0), NULLIF(CAST(v.vendedor AS SIGNED), 0), CAST(v.idusr AS SIGNED)) = ?)
               AND v.fecha >= ? AND v.fecha <= ?
               AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
               AND dv.cuantos > 0
-              AND (dv.comision / dv.cuantos) >= 40.00
+              AND p.comision >= 40.00
             ORDER BY v.fecha DESC
         ";
 
@@ -245,10 +248,11 @@ class Incentivo_model extends CI_Model {
             FROM ventas v
             JOIN detalleventas dv ON v.idventa = dv.idventa
             LEFT JOIN depositos d ON v.idneg = d.id
+            LEFT JOIN productos p ON dv.idprod = p.idprod
             WHERE v.fecha >= ? AND v.fecha <= ?
               AND (v.estado IS NULL OR UPPER(TRIM(v.estado)) != 'ANULADO')
               AND dv.cuantos > 0
-              AND (dv.comision / dv.cuantos) >= 40.00
+              AND p.comision >= 40.00
             GROUP BY vendedor_id, v.idneg
         ";
         $ventasAgrupadas = $this->db->query($sqlVentas, [$fecha_inicio, $fecha_fin])->result();
@@ -283,7 +287,8 @@ class Incentivo_model extends CI_Model {
         $this->db->from('vendedores v');
         $this->db->join('depositos d', 'v.ciudad = d.id', 'left');
         $this->db->where('(v.recibe_comision IS NULL OR v.recibe_comision = 1)');
-        $this->db->where("(TRIM(LOWER(v.rol)) IN ('vendedores', 'vendedor') OR v.id IN (SELECT vendedor_id FROM vendedores_roles WHERE TRIM(LOWER(rol)) IN ('vendedores', 'vendedor')))", NULL, FALSE);
+        $vendedoresIdsConVentas = !empty($vendedoresData) ? implode(',', array_map('intval', array_keys($vendedoresData))) : '0';
+        $this->db->where("(TRIM(LOWER(v.rol)) IN ('vendedores', 'vendedor') OR v.id IN (SELECT vendedor_id FROM vendedores_roles WHERE TRIM(LOWER(rol)) IN ('vendedores', 'vendedor')) OR v.id IN ({$vendedoresIdsConVentas}))", NULL, FALSE);
         $this->db->order_by('v.nombre', 'ASC');
 
         $vendedores = $this->db->get()->result();
